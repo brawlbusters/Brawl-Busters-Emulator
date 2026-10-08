@@ -1,0 +1,212 @@
+using System.Security.Cryptography;
+using BrawlBusters.Core.Configuration;
+using BrawlBusters.Core.Data;
+using BrawlBusters.Core.Logging;
+using BrawlBusters.Core.Network;
+using BrawlBusters.Core.Protocol;
+using BrawlBusters.Core.Protocol.Packets;
+using BrawlBusters.Core.Security;
+
+namespace BrawlBusters.Core.Sessions;
+
+public abstract class ClientSession
+{
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(15);
+
+    private readonly MessageRouter _router;
+
+    protected ClientSession(GameConnection connection, EmulatorSettings settings, AccountRepository accounts, MessageRouter router)
+    {
+        Connection = connection;
+        Settings = settings;
+        Accounts = accounts;
+        _router = router;
+    }
+
+    public GameConnection Connection { get; }
+    public EmulatorSettings Settings { get; }
+    public AccountRepository Accounts { get; }
+
+    public Account Account { get; private set; } = null!;
+
+    public ushort ChannelId { get; set; }
+
+    public Room? Room { get; set; }
+
+    public bool InMatch { get; set; }
+
+    public ushort SingleStage { get; set; }
+
+    public bool SingleStageFinished { get; set; }
+
+    public string Tag => Account is null ? Connection.Tag : $"{Connection.Tag} {Account.LoginId}";
+
+    protected abstract bool AcceptsLogin { get; }
+
+    protected abstract bool AcceptsTransfer { get; }
+
+    protected abstract Task OnSessionStartedAsync(CancellationToken cancellationToken);
+
+    protected virtual Task OnSessionEndedAsync() => Task.CompletedTask;
+
+    public Task SendAsync(PacketWriter message, CancellationToken cancellationToken = default)
+    {
+        if (Settings.LogPackets)
+        {
+            byte[] bytes = message.ToArray();
+            Log.Debug(Tag, $"SEND {(MsgCategory)bytes[0],-16} {Log.Hex(bytes.AsSpan(1))}");
+        }
+        return Connection.SendAsync(message, cancellationToken);
+    }
+
+    public void RefreshAccount() => Account = Accounts.FindById(Account.Id) ?? Account;
+
+    public async Task RunAsync(CancellationToken cancellationToken)
+    {
+        uint seed = BitConverter.ToUInt32(RandomNumberGenerator.GetBytes(4));
+        await Connection.SendRawAsync(ServerGreeting.Build(ProtocolConstants.LobbyGreeting, seed), cancellationToken);
+
+        if (!await HandshakeAsync(seed, cancellationToken)) return;
+
+        using var sessionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task keepAlive = Task.CompletedTask;
+        try
+        {
+            await OnSessionStartedAsync(cancellationToken);
+            SessionRegistry.Add(this);
+            keepAlive = SendKeepAlivesAsync(sessionLifetime.Token);
+
+            while (await Connection.ReceiveAsync(cancellationToken) is { } message)
+                await _router.DispatchAsync(this, message, cancellationToken);
+        }
+        finally
+        {
+            SessionRegistry.Remove(this);
+            sessionLifetime.Cancel();
+            await keepAlive;
+            GameFlow.Disconnected(this);
+            await OnSessionEndedAsync();
+        }
+    }
+
+    private async Task SendKeepAlivesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(KeepAliveInterval);
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+                await Connection.SendAsync(KeepAlivePacket.Idle(), cancellationToken);
+        }
+        catch (Exception exception) when (exception is OperationCanceledException or IOException or ObjectDisposedException)
+        {
+        }
+    }
+
+    private async Task<bool> HandshakeAsync(uint seed, CancellationToken cancellationToken)
+    {
+        while (await Connection.ReceiveRawAsync(cancellationToken) is { Length: > 0 } packet)
+        {
+            if (Settings.LogPackets) Log.Debug(Tag, $"HANDSHAKE RECV {Log.Hex(packet)}");
+
+            Account? account = packet[0] switch
+            {
+                ProtocolConstants.ClientLoginMarker when AcceptsLogin => await LoginAsync(packet, seed, cancellationToken),
+                (byte)MsgCategory.cClientTransferInfo when AcceptsTransfer => await TransferAsync(packet, cancellationToken),
+                _ => await RejectAsync(packet[0], cancellationToken),
+            };
+            if (account is null) continue;
+
+            Account = account;
+            await Connection.SendRawAsync(LoginReply.SessionInfo(account.SessionKey), cancellationToken);
+
+            byte[]? ready = await Connection.ReceiveRawAsync(cancellationToken);
+            if (ready is not [(byte)MsgCategory.cSessionReady, ..])
+            {
+                Log.Warn(Tag, $"Expected cSessionReady, got {(ready is null ? "disconnect" : Log.Hex(ready))}");
+                return false;
+            }
+
+            await Connection.SendRawAsync(LoginReply.StartSession(), cancellationToken);
+            Log.Info(Tag, $"Session started (uid {account.Id}, nick '{account.Nickname}')");
+            return true;
+        }
+        return false;
+    }
+
+    private async Task<Account?> LoginAsync(byte[] packet, uint seed, CancellationToken cancellationToken)
+    {
+        ClientLoginInfo info;
+        try
+        {
+            info = ClientLoginInfo.Parse(packet, seed);
+        }
+        catch (EndOfStreamException)
+        {
+            await Connection.SendRawAsync(LoginReply.Failed(NetError.Login_PacketVersion), cancellationToken);
+            return null;
+        }
+
+        Log.Info(Tag, $"Login '{info.LoginId}' (packet v{info.PacketVersion}, locale '{info.Locale}')");
+
+        if (info.PacketVersion != ProtocolConstants.PacketVersion)
+            return await FailAsync(LoginReply.Failed(NetError.Login_PacketVersion), "packet version mismatch", cancellationToken);
+        if (info.TokenMode)
+            return await FailAsync(LoginReply.Failed(NetError.OTP_Failed), "token login is not supported", cancellationToken);
+
+        Account? account = Accounts.FindByLoginId(info.LoginId);
+        if (account is null)
+        {
+            NetError? invalid = AccountRules.ValidateNewAccount(info.LoginId, info.Password);
+            if (invalid is { } reason)
+                return await FailAsync(LoginReply.CreateIdFailed(reason), $"registration refused: {reason}", cancellationToken);
+
+            account = Accounts.Create(info.LoginId, PasswordHasher.Hash(info.Password));
+            if (account is null)
+                return await FailAsync(LoginReply.CreateIdFailed(NetError.ID_AlreadyExist), "id taken", cancellationToken);
+
+            Log.Info(Tag, $"Registered new account '{account.LoginId}' (uid {account.Id})");
+        }
+        else if (!PasswordHasher.Verify(info.Password, account.PasswordHash))
+        {
+            return await FailAsync(LoginReply.Failed(NetError.PW_WrongPassword), "wrong password", cancellationToken);
+        }
+
+        ulong sessionKey = BitConverter.ToUInt64(RandomNumberGenerator.GetBytes(8));
+        return Accounts.Update(account.Id, a =>
+        {
+            a.SessionKey = sessionKey;
+            a.LastLoginUtc = DateTime.UtcNow;
+        });
+    }
+
+    private async Task<Account?> TransferAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        ClientTransferInfo info;
+        try
+        {
+            info = ClientTransferInfo.Parse(packet);
+        }
+        catch (EndOfStreamException)
+        {
+            return await FailAsync(LoginReply.Failed(NetError.ServerTransfer), "malformed transfer packet", cancellationToken);
+        }
+
+        Log.Info(Tag, $"Transfer '{info.LoginId}' / '{info.Nickname}'");
+
+        Account? account = Accounts.FindByLoginId(info.LoginId);
+        if (account is null || account.SessionKey == 0 || account.SessionKey != info.SessionKey)
+            return await FailAsync(LoginReply.Failed(NetError.ServerTransfer), "unknown session key", cancellationToken);
+
+        return account;
+    }
+
+    private async Task<Account?> RejectAsync(byte marker, CancellationToken cancellationToken)
+        => await FailAsync(LoginReply.Failed(NetError.LoginFailed), $"unexpected handshake packet 0x{marker:X2}", cancellationToken);
+
+    private async Task<Account?> FailAsync(byte[] reply, string reason, CancellationToken cancellationToken)
+    {
+        Log.Warn(Tag, $"Handshake refused: {reason}");
+        await Connection.SendRawAsync(reply, cancellationToken);
+        return null;
+    }
+}

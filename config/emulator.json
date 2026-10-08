@@ -1,0 +1,21 @@
+{
+  "PublicAddress": "127.0.0.1",
+  "AuthPorts": [
+    25100,
+    25110
+  ],
+  "MainPort": 25120,
+  "ChatPort": 25900,
+  "CastPort": 25200,
+  "LogPackets": true,
+  "Channels": [
+    {
+      "Id": 1,
+      "Name": "Channel 1"
+    },
+    {
+      "Id": 2,
+      "Name": "Channel 2"
+    }
+  ]
+}

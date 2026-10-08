@@ -1,0 +1,5 @@
+bin/
+obj/
+.vs/
+__pycache__/
+logs/

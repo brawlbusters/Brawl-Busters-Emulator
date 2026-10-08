@@ -1,0 +1,48 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{42EAA86D-4676-4A14-8107-029FCF41DBF8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BrawlBusters.Core", "src\BrawlBusters.Core\BrawlBusters.Core.csproj", "{F3D8803B-6FBE-41C5-809F-DA137CC1904A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BrawlBusters.AuthServer", "src\BrawlBusters.AuthServer\BrawlBusters.AuthServer.csproj", "{858CD2C7-E9E4-48E9-8D51-C42B969D69BF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BrawlBusters.MainServer", "src\BrawlBusters.MainServer\BrawlBusters.MainServer.csproj", "{1D894924-184D-46CA-A46C-481B36DCF5C9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BrawlBusters.CastServer", "src\BrawlBusters.CastServer\BrawlBusters.CastServer.csproj", "{E172E38B-2CAA-48BD-B64B-44EE1016B60D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F3D8803B-6FBE-41C5-809F-DA137CC1904A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F3D8803B-6FBE-41C5-809F-DA137CC1904A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F3D8803B-6FBE-41C5-809F-DA137CC1904A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F3D8803B-6FBE-41C5-809F-DA137CC1904A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{858CD2C7-E9E4-48E9-8D51-C42B969D69BF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{858CD2C7-E9E4-48E9-8D51-C42B969D69BF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{858CD2C7-E9E4-48E9-8D51-C42B969D69BF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{858CD2C7-E9E4-48E9-8D51-C42B969D69BF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1D894924-184D-46CA-A46C-481B36DCF5C9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1D894924-184D-46CA-A46C-481B36DCF5C9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1D894924-184D-46CA-A46C-481B36DCF5C9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1D894924-184D-46CA-A46C-481B36DCF5C9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E172E38B-2CAA-48BD-B64B-44EE1016B60D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E172E38B-2CAA-48BD-B64B-44EE1016B60D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E172E38B-2CAA-48BD-B64B-44EE1016B60D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E172E38B-2CAA-48BD-B64B-44EE1016B60D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{F3D8803B-6FBE-41C5-809F-DA137CC1904A} = {42EAA86D-4676-4A14-8107-029FCF41DBF8}
+		{858CD2C7-E9E4-48E9-8D51-C42B969D69BF} = {42EAA86D-4676-4A14-8107-029FCF41DBF8}
+		{1D894924-184D-46CA-A46C-481B36DCF5C9} = {42EAA86D-4676-4A14-8107-029FCF41DBF8}
+		{E172E38B-2CAA-48BD-B64B-44EE1016B60D} = {42EAA86D-4676-4A14-8107-029FCF41DBF8}
+	EndGlobalSection
+EndGlobal
