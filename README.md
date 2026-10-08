@@ -77,5 +77,7 @@ Failure to comply with the license terms is a violation of the license.
 
 ## Contacts
 
+For support, join our Discord server: https://discord.gg/j3FwbAgzXw
+
 For info, contributions or bug reports related to the emulator, please open an issue on
 this repository.
