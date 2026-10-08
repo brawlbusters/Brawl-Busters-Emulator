@@ -10,7 +10,10 @@ of three servers:
 - **MainServer** - lobby, channels, rooms, inventory, shop, chat and buddies
 - **CastServer** - matches
 
-The game client is not included. You need your own copy of the game.
+The game client is not included in this repository.
+
+Game client download:
+http://www.mediafire.com/file/7c27acxte8gze7h/Brawl_busters_client.zip
 
 ## Running it
 
