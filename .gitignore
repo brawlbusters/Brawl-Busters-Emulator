@@ -12,3 +12,8 @@ config/emulator.local.json
 play-online.bat
 *.before-server-change
 *.before-web-change
+play-localhost.bat
+play-relogin.bat
+start-server.sh
+start-servers-local.bat
+start-servers.bat
