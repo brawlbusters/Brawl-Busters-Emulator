@@ -3,14 +3,16 @@
 A server emulator for Brawl Busters, written in C# (.NET 9).
 
 Brawl Busters was shut down years ago and the official servers are gone. This project
-rebuilds the server side so the original client can log in and play again. It is made up
-of three servers:
+rebuilds the server side so the original client can log in and play again.
 
-- **AuthServer** - login and account creation
-- **MainServer** - lobby, channels, rooms, inventory, shop, chat and buddies
-- **CastServer** - matches
+## Showcase
 
-The game client is not included. You need your own copy of the game.
+[![Brawl Busters Emulator showcase](https://img.youtube.com/vi/wJ-pmlJMprw/hqdefault.jpg)](https://youtu.be/wJ-pmlJMprw)
+
+The game client is not included in this repository.
+
+Game client download:
+http://www.mediafire.com/file/7c27acxte8gze7h/Brawl_busters_client.zip
 
 ## Running it
 
@@ -73,6 +75,8 @@ This includes, at minimum:
 Failure to comply with the license terms is a violation of the license.
 
 ## Contacts
+
+For support, join our Discord server: https://discord.gg/j3FwbAgzXw
 
 For info, contributions or bug reports related to the emulator, please open an issue on
 this repository.
