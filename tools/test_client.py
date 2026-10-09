@@ -1,11 +1,23 @@
 import hashlib
 import socket
 import struct
+import os
 import sys
 import time
 
 HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
-PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 25100
+def _configured_port():
+    """The first lobby port of config/emulator.json, so the tests follow a change of ports."""
+    import json
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        with open(os.path.join(root, "config", "emulator.json"), encoding="utf-8-sig") as handle:
+            return int(json.load(handle)["LobbyPorts"][0])
+    except (OSError, KeyError, IndexError, ValueError):
+        return 25100
+
+
+PORT = int(sys.argv[2]) if len(sys.argv) > 2 else int(os.environ.get("BB_LOBBY_PORT") or _configured_port())
 
 
 def frame(body):
@@ -70,9 +82,16 @@ def ws(text):
     return struct.pack("<H", len(text)) + text.encode("utf-16le")
 
 
+# What the server sends on its own to everybody in a lobby: channel states (sServer 01) and room list changes
+# (sRoomList 01 / 02 / 03) and the lobby player count (sLobby 01). Tests that read replies one by one do not want them in between.
+PUSHES = (bytes([0x05, 1]), bytes([0x0D, 1]), bytes([0x0D, 2]), bytes([0x0D, 3]), bytes([0x0F, 1]))
+
+
 class Client:
-    def __init__(self):
-        self.sock = socket.create_connection((HOST, PORT), timeout=5)
+    skip_pushes = True
+
+    def __init__(self, port=None):
+        self.sock = socket.create_connection((HOST, port or PORT), timeout=5)
         self.buffer = b""
         self.send_seq = 0
         self.recv_seq = 0
@@ -125,11 +144,28 @@ class Client:
                     assert plain[0] == 0x0B, plain.hex()
                     assert plain[1] == self.recv_seq, "sequence %d != %d" % (plain[1], self.recv_seq)
                     self.recv_seq = (self.recv_seq + 1) & 255
+                    if Client.skip_pushes and plain[2:4] in PUSHES:
+                        continue
                     return plain[2:]
             data = self.sock.recv(65536)
             if not data:
                 raise ConnectionError("server closed the connection")
             self.buffer += data
+
+
+def first_channel():
+    """The id of the first channel in config/emulator.json (1 when none are configured)."""
+    import json
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        with open(os.path.join(root, "config", "emulator.json"), encoding="utf-8-sig") as handle:
+            configured = [channel["Id"] for channel in json.load(handle)["Channels"]]
+        with open(os.path.join(root, "data", "game", "maps.json"), encoding="utf-8") as handle:
+            ranges = {channel["id"]: (channel["level_min"], channel["level_max"]) for channel in json.load(handle)["channels"]}
+        level = int(os.environ.get("BB_TEST_LEVEL", "30"))
+        return next((cid for cid in configured if cid not in ranges or ranges[cid][0] <= level <= ranges[cid][1]), configured[0])
+    except (OSError, KeyError, IndexError, ValueError):
+        return 1
 
 
 def check(name, condition, detail=""):

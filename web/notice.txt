@@ -1,0 +1,4 @@
+Welcome to the server
+
+- Edit web/notice.txt and run tools/make_notice.py
+- Reopen the main screen to see the change

@@ -2,7 +2,7 @@ import struct
 import sys
 import time
 
-from test_client import Client, check, ws
+from test_client import first_channel, Client, check, ws
 
 
 def expect(client, name, expected_hex):
@@ -50,7 +50,7 @@ def main():
                 message == bytes.fromhex("0b0101010200" "0200" "0efb000000000000000000010001ffffffff"), message.hex())
 
     c.send(bytes.fromhex("301e97130000000000000000000101"))
-    ok &= expect(c, "third purchase refused (not enough gold)", "0c1c01")
+    ok &= expect(c, "third purchase refused: sStore 1D Store_NoGold (55, \"You have insufficient BP\")", "0c1d37")
 
     c.send(bytes.fromhex("311a"))
     ok &= expect(c, "open inventory -> sMode 06", "0e06")
@@ -76,9 +76,9 @@ def main():
     host = new_player_at_home()
     for client in (c, host):
         client.send(bytes.fromhex("3118"))
-        for _ in range(4):
+        for _ in range(2):
             client.recv()
-        client.send(bytes.fromhex("3203") + struct.pack("<H", 1))
+        client.send(bytes.fromhex("3203") + struct.pack("<H", first_channel()))
         for _ in range(3):
             client.recv()
 

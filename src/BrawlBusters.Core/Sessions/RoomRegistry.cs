@@ -14,6 +14,25 @@ public sealed class RoomMember
     public byte Status { get; set; } = 2;
 
     public byte Team { get; set; }
+
+    public int HostIndex { get; set; } = -1;
+
+    public ushort Ping { get; set; }
+
+    public MatchPayout? Payout { get; set; }
+
+    public bool Intruding { get; set; }
+
+    /// <summary>
+    /// Matches won in a row in this room - the signed byte at offset 7 of the room slot, which the room screen shows
+    /// as "Winning Streak" (client 0x7B2641). It lives with the seat: leaving the room ends it.
+    /// </summary>
+    public int WinStreak { get; set; }
+
+    public bool InResult { get; set; }
+
+    /// <summary>A game master who came straight from the lobby with /gm_observe: no room screen, no result screen.</summary>
+    public bool GmObserver { get; set; }
 }
 
 public sealed record RoomBot(uint Id, string Name, byte CharacterClass, byte Level, int Slot, byte Team = 0);
@@ -157,6 +176,19 @@ public sealed class Room
         }
     }
 
+    public RoomMember? JoinAsObserver(ClientSession session)
+    {
+        lock (_members)
+        {
+            RoomMember? already = _members.FirstOrDefault(member => member.Session == session);
+            if (already is not null) return already;
+
+            var joined = new RoomMember { Session = session, Slot = -1, Status = 0 };
+            _members.Add(joined);
+            return joined;
+        }
+    }
+
     public RoomMember? Leave(ClientSession session)
     {
         lock (_members)
@@ -179,6 +211,13 @@ public sealed class Room
     public required string Title { get; init; }
 
     public string Password { get; set; } = "";
+
+    public const byte LadderSingle = 1;
+    public const byte LadderMulti = 2;
+
+    public byte LadderType { get; set; }
+
+    public bool IsLadder => LadderType != 0;
     public required uint HostUserId { get; set; }
 
     public required IPEndPoint HostEndPoint { get; set; }
@@ -188,6 +227,8 @@ public sealed class Room
     public ushort PlayedMapId { get; set; }
 
     public DateTime? MatchStartedUtc { get; set; }
+
+    public MatchLog Log { get; set; } = new();
 
     public bool HostLoaded { get; set; }
 

@@ -1,0 +1,3 @@
+Store
+
+Edit web/shop.txt and run tools/make_notice.py.

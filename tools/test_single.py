@@ -10,10 +10,8 @@ def main():
     c = new_player_at_home()
 
     c.send(bytes.fromhex("311c"))
-    ok &= expect(c, "single lobby: progress 01 00 00", "1200010000")
-    ok &= expect(c, "single lobby: progress again", "1200010000")
     ok &= expect(c, "single lobby: sMode 08", "0e08")
-    ok &= expect(c, "single lobby: progress again", "1200010000")
+    ok &= expect(c, "single lobby: progress 01 00 00", "1200010000")
 
     c.send(bytes.fromhex("35030200"))
     ok &= expect(c, "start stage 2: progress", "1200010000")

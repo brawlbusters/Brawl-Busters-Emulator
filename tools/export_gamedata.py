@@ -59,6 +59,8 @@ def main():
             "extend": int_list(row.get("LIMIT_EXPIRE_EXTEND", "")),
             "extend_gold": int_list(row.get("PRICE_GOLD_EXTEND", "")),
             "extend_cash": int_list(row.get("PRICE_CASH_EXTEND", "")),
+            "insure_decrease": int_list(row.get("PRICE_CASH_INSURANCE_DECREASE", "")),
+            "insure_destroy": int_list(row.get("PRICE_CASH_INSURANCE_DESTROY", "")),
             "options": [int_list(row.get("OPTION_%d" % n, "")) for n in (1, 2, 3, 4)],
         }
 
@@ -71,7 +73,8 @@ def main():
         for row in rows:
             if row.get("ID", "").isdigit() and row.get("TYPE_ITEM", "").isdigit():
                 items[row["ID"]] = [int(row["TYPE_ITEM"]), int(row.get("ID_CLASS") or 0), int(row.get("STACK") or 0),
-                                    int(row.get("ID_CONVERT_R") or 0), int(row.get("ID_CONVERT_LR") or 0)]
+                                    int(row.get("ID_CONVERT_R") or 0), int(row.get("ID_CONVERT_LR") or 0),
+                                    int(row.get("MINIMUM_LEVEL") or 0)]
 
     packages = {
         "packages": {
@@ -99,7 +102,8 @@ def main():
     for row in item_tables.get("MISC", []):
         if not row.get("ID", "").isdigit():
             continue
-        entry = {"type": int(row["TYPE_ITEM"]), "gold": int(row.get("GIVE_GOLD") or 0), "parts": {}}
+        entry = {"type": int(row["TYPE_ITEM"]), "gold": int(row.get("GIVE_GOLD") or 0),
+                 "bonus_gold": int(row.get("BONUS_GOLD") or 0), "bonus_exp": int(row.get("BONUS_EXP") or 0), "parts": {}}
         for part in parts:
             addon = int_list(row.get("INDEX_%s_ADDON" % part, ""))
             if addon and addon != [0]:
@@ -133,10 +137,20 @@ def main():
     for name in ("EXP", "GOLD"):
         for row in result_tables.get(name, []):
             if row.get("ID", "").isdigit():
+                amount = lambda key: float(row.get(key) or 0)
                 payouts.setdefault(row["ID"], {})[name.lower()] = {
                     "outcome": int_list(row.get("OUTCOME", "")),
                     "member": float_list(row.get("MEMBER", "")),
+                    "difficulty": float_list(row.get("DIFFICULTY", "")),
+                    "balance": float_list(row.get("BALANCE", "")),
+                    "crown": float_list(row.get("CROWN", "")),
                     "time_min": int(row.get("TIME_MIN") or 0),
+                    "time_max": int(row.get("TIME_MAX") or 0),
+                    "wave": amount("WAVE"), "star": amount("STAR"), "jessium": amount("JESSIUM"), "kill": amount("KILL"),
+                    "assist": amount("ASSIST"), "revive": amount("REVIVE"), "survival": amount("SURVIVAL"), "attack": amount("ATTACK"),
+                    "perfect": amount("PERFECTWIN"), "immortal": amount("IMMORTAL"), "longlife": amount("LONGLIFE"),
+                    "lastkill": amount("LASTKILL"), "firstkill": amount("FIRSTKILL"), "combo": amount("INFINITECOMBO"),
+                    "item": amount("ITEMMANIA"), "charger": amount("CHARGERMANIA"), "revenge": amount("REVENGE"),
                 }
     bonus = {}
     for row in result_tables.get("BONUS", []):
@@ -151,7 +165,18 @@ def main():
         if row.get("ID", "").isdigit():
             rewards[row["ID"]] = [int(row.get("TYPE") or 0), int(row.get("VALUE") or 0)]
     with open(os.path.join(OUT_DIR, "results.json"), "w", encoding="utf-8") as handle:
-        json.dump({"payouts": payouts, "bonus": bonus, "rewards": rewards}, handle, separators=(",", ":"))
+        level_rewards = {row["ID"]: [reward for reward in int_list(row.get("ID_REWARD", "")) if reward]
+                         for row in records(tables["globaldb.xml"]) if row.get("ID", "").isdigit() and "NOTIFY" in row}
+        level_rewards = {level: rewards for level, rewards in level_rewards.items() if rewards}
+        number = lambda row, key: int(row.get(key) or 0)
+        missions = [{
+            "id": number(row, "ID"), "grade": number(row, "GRADE"), "type": number(row, "TYPE_MISSION"), "mode": number(row, "TYPE_MODE"),
+            "difficulty": number(row, "DIFFICULTY"), "class": number(row, "CLASS"), "target": number(row, "TARGET"),
+            "method": number(row, "METHOD"), "count": number(row, "COUNT"),
+            "rewards": int_list(row.get("INDEX_REWARD_ID", "")), "prob": int_list(row.get("INDEX_REWARD_PROB", "")),
+        } for row in tables_of(tables["missiondb.xml"]).get("DAILY", []) if row.get("ID", "").isdigit()]
+        json.dump({"payouts": payouts, "bonus": bonus, "rewards": rewards, "level_rewards": level_rewards, "missions": missions},
+                  handle, separators=(",", ":"))
     print("payout rows: %d, bonus maps: %d, rewards: %d" % (len(payouts), len(bonus), len(rewards)))
 
     capsule_tables = tables_of(tables["capsuledb.xml"])
@@ -191,6 +216,10 @@ def main():
     level_exp = [levels[level] for level in sorted(levels)]
 
     maps, rules = [], []
+    waves = {}
+    for row in tables_of(tables["leveldb.xml"]).get("WAVEGROUP", []):
+        if row.get("ID_GROUP", "").isdigit():
+            waves[row["ID_GROUP"]] = waves.get(row["ID_GROUP"], 0) + 1
     for row in records(tables["leveldb.xml"]):
         if not row.get("ID", "").isdigit():
             continue
@@ -213,6 +242,8 @@ def main():
                 "default": row.get("IS_DEFAULT") == "1",
                 "time": int(row.get("TIME_PLAYGAME") or 0),
                 "rounds": int(row.get("ROUND") or 1),
+                "waves": waves.get(row.get("SUV_ID_WAVEGROUP", ""), 0),
+                "difficulty": int(row.get("SUV_DIFFICULTY") or 0),
             })
 
     stages = []
@@ -234,8 +265,47 @@ def main():
     with open(os.path.join(OUT_DIR, "singleplay.json"), "w", encoding="utf-8") as handle:
         json.dump(stages, handle, separators=(",", ":"))
     print("single-play stages: %d" % len(stages))
+    strings = {}
+    static_data, _, static_entries = read_archive(os.path.join(ROOT, "..", "Data", "xmandb_static2.bus"))
+    for name, offset, size, encrypted in static_entries:
+        if os.path.basename(name) != "stringtabledb.xml":
+            continue
+        payload = static_data[offset:offset + size]
+        text = (xor(payload) if encrypted else payload).decode("utf-8", "replace")
+        for block in re.findall(r"<DATA>(.*?)</DATA>", text, re.S):
+            key = re.search(r"<ID>\s*<!\[CDATA\[(.*?)\]\]>", block, re.S)
+            english = re.search(r"<RH_EN>\s*<!\[CDATA\[(.*?)\]\]>", block, re.S)
+            if key:
+                strings[key.group(1)] = english.group(1) if english else ""
+
+    server_tables = tables_of(tables["serverconfigdb.xml"])
+    client_tables = tables_of(tables["clientconfigdb.xml"])
+    areas = {row["ID"] for row in client_tables.get("SERVICE_AREA", []) if row.get("ID")}
+    publisher = "3"
+    channel_types = {row["ID"]: row for row in server_tables.get("CHANNEL_TYPE", []) if row.get("ID_PUBLISHER") == publisher}
+    channels = []
+    for row in server_tables.get("CHANNEL", []):
+        kind = channel_types.get(row.get("CHANNEL_TYPE", ""))
+        if not row.get("ID", "").isdigit() or kind is None or row.get("NAME") not in strings:
+            continue
+        area = re.sub(r"\d+_?$", "", row["NAME"].strip("_").split("_")[-1])
+        channels.append({
+            "id": int(row["ID"]),
+            "name": row["NAME"],
+            "text": strings[row["NAME"]],
+            "type": int(row["CHANNEL_TYPE"]),
+            "level_min": int(kind.get("LEVEL_MIN") or 1),
+            "level_max": int(kind.get("LEVEL_MAX") or 99),
+            "area": area if area in areas else "",
+        })
+    print("channels with a name in the client's string table: %d" % len(channels))
+
+    censored = sorted({row["TEXT"].strip().lower() for row in tables_of(tables["censoredtextdb.xml"]).get("CENSOREDTEXT", [])
+                       if row.get("TEXT", "").strip()})
+    print("censored words: %d" % len(censored))
+
     with open(os.path.join(OUT_DIR, "maps.json"), "w", encoding="utf-8") as handle:
-        json.dump({"maps": maps, "rules": rules}, handle, separators=(",", ":"))
+        json.dump({"maps": maps, "rules": rules, "channels": channels, "censored": censored}, handle, separators=(",", ":"))
     with open(os.path.join(OUT_DIR, "levels.json"), "w", encoding="utf-8") as handle:
         json.dump(level_exp, handle, separators=(",", ":"))
     with open(os.path.join(OUT_DIR, "catalog.json"), "w", encoding="utf-8") as handle:

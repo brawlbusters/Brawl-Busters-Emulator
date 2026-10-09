@@ -36,8 +36,8 @@ def main():
     c.sock.close()
 
     accounts = json.load(open(os.path.join(ROOT, "data", "accounts.json"), encoding="utf-8"))
-    maxed = [a for a in accounts if a.get("level") == 99]
-    ok &= check("accounts stored at level 99", len(maxed) >= 1, ", ".join(a["LoginId"] for a in maxed))
+    raised = [a for a in accounts if a.get("level", 0) >= 30 and a.get("Gold") == 999999999 and a.get("Cash") == 999999999]
+    ok &= check("accounts raised to level 30 with full BP and RT", len(raised) >= 1, "%d account(s)" % len(raised))
 
     chat = ChatClient(1, "alice")
     chat.send(bytes.fromhex("4127"))

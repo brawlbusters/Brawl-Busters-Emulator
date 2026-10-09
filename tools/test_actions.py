@@ -1,8 +1,14 @@
 import struct
 import sys
 
-from test_client import check, ws
+from test_client import first_channel, check, ws
 from test_shop import new_player_at_home
+
+
+def taken_nickname():
+    import json, os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "accounts.json")
+    return [a["Nickname"] for a in json.load(open(path, encoding="utf-8")) if a.get("Nickname")][-1]
 
 ITEM = 18
 
@@ -38,17 +44,16 @@ def main():
     gold, stone = buy(c, 251)
     gold, stone2 = buy(c, 251)
 
+    # The test account is level 1 and the stone "requires level 5" (MINIMUM_LEVEL of the item table).
     c.send(bytes.fromhex("2f13") + struct.pack("<HH", weapon, stone))
-    reply, _, listing = c.recv(), c.recv(), c.recv()
-    items = items_of(listing)
-    ok &= check("reinforce +0: reply 08 = ok, outcome 0, item slot, stone slot, level 11",
-                reply == bytes.fromhex("0b0801") + bytes([0]) + struct.pack("<HHH", weapon, stone, 11), reply.hex())
-    ok &= check("reinforce +0: the weapon is now 11 and the stone is used up",
-                items.get(weapon, (0, 0))[1] == 11 and stone not in items, str(items))
+    reply = c.recv()
+    ok &= check("reinforce with a stone above the player's level: sInventory 05 Inventory_UpgradeInactiveItem (61)",
+                reply == bytes.fromhex("0b053d"), reply.hex())
 
     c.send(bytes.fromhex("2f13") + struct.pack("<HH", weapon, weapon))
     reply = c.recv()
-    ok &= check("reinforce with a wrong item: reply 08 = not ok", reply == bytes.fromhex("0b0800"), reply.hex())
+    ok &= check("reinforce with something that is not a stone: Inventory_MismatchUpgradeItemType (60)",
+                reply == bytes.fromhex("0b053c"), reply.hex())
 
     c.send(bytes.fromhex("2f11") + struct.pack("<H", stone2))
     reply, balance, listing = c.recv(), c.recv(), c.recv()
@@ -59,23 +64,23 @@ def main():
     gold, timed = buy(c, 501)
     c.send(bytes.fromhex("311a")); c.recv(); c.recv()
     c.send(bytes.fromhex("2f15") + struct.pack("<HBB", timed, 1, 1))
-    reply, balance, listing = c.recv(), c.recv(), c.recv()
-    before_after = items_of(listing)[timed][3]
-    ok &= check("extend: reply 0A = ok, slot, option, new expiry",
-                reply[:6] == bytes.fromhex("0b0a01") + struct.pack("<HB", timed, 1) and struct.unpack_from("<I", reply, 6)[0] == before_after, reply.hex())
-    ok &= check("extend: 1240 BP paid", gold_of(balance) == gold - 1240, str(gold - gold_of(balance)))
+    reply = c.recv()
+    ok &= check("extend an item that has not expired: sInventory 05 Inventory_NotExpiredItem (62), nothing paid",
+                reply == bytes.fromhex("0b053e"), reply.hex())
 
     c.send(bytes.fromhex("2f19") + ws("Zq%d" % (gold % 100000)))
     reply = c.recv()
     ok &= check("nickname check, free name: 0C 01 (Success)", reply == bytes.fromhex("0b0c01"), reply.hex())
-    c.send(bytes.fromhex("2f19") + ws("mik2"))
+    other = new_player_at_home()
+    other.sock.close()
+    c.send(bytes.fromhex("2f19") + ws(taken_nickname()))
     reply = c.recv()
     ok &= check("nickname check, taken name: 0C 20 (Nick_AlreadyExist)", reply == bytes.fromhex("0b0c20"), reply.hex())
 
     c.send(bytes.fromhex("3118"))
-    for _ in range(4):
+    for _ in range(2):
         c.recv()
-    c.send(bytes.fromhex("3203") + struct.pack("<H", 1))
+    c.send(bytes.fromhex("3203") + struct.pack("<H", first_channel()))
     for _ in range(3):
         c.recv()
     c.send(bytes.fromhex("3205") + struct.pack("<H", 60000))

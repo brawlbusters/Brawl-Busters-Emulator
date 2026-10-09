@@ -27,7 +27,18 @@ public sealed class GameData
         _mapList = maps.Maps;
         Maps = maps.Maps.ToDictionary(map => map.Id);
         Rules = maps.Rules.ToDictionary(rule => rule.Id);
+        Channels = maps.Channels.ToDictionary(channel => channel.Id);
+        CensoredWords = maps.Censored;
     }
+
+    public IReadOnlyList<string> CensoredWords { get; }
+
+    /// <summary>False when the item asks for a higher level than <paramref name="level"/> ("Requires Level N or higher").</summary>
+    public bool LevelAllows(uint itemId, byte level) => !Items.TryGetValue(itemId, out ItemInfo info) || info.MinLevel <= level;
+
+    public IReadOnlyDictionary<ushort, ChannelData> Channels { get; }
+
+    public byte ChannelType(ushort channelId) => Channels.TryGetValue(channelId, out ChannelData? channel) ? channel.Type : (byte)channelId;
 
     public IReadOnlyDictionary<ushort, MapInfo> Maps { get; }
 
@@ -148,6 +159,13 @@ public sealed class CatalogEntry
 
     [JsonPropertyName("extend_cash")]
     public List<int> ExtendCash { get; set; } = [];
+
+    /// <summary>RT price, per reinforce level, of keeping the item from going down a level / from breaking.</summary>
+    [JsonPropertyName("insure_decrease")]
+    public List<int> InsureDecrease { get; set; } = [];
+
+    [JsonPropertyName("insure_destroy")]
+    public List<int> InsureDestroy { get; set; } = [];
 
     [JsonPropertyName("options")]
     public List<List<int>> Options { get; set; } = [];

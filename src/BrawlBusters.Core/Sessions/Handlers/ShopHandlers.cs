@@ -9,6 +9,7 @@ namespace BrawlBusters.Core.Sessions.Handlers;
 public sealed class StoreHandler : IMessageHandler
 {
     private const byte PayWithGold = 1;
+    private const byte PayWithCash = 2;
 
     public MsgCategory Category => MsgCategory.cStore;
 
@@ -32,16 +33,39 @@ public sealed class StoreHandler : IMessageHandler
     {
         GameData data = GameData.Instance;
 
-        if (!data.Catalog.TryGetValue(catalogId, out CatalogEntry? entry)
-            || option < 0 || option >= entry.Gold.Count
-            || payment != PayWithGold)
+        if (session.IsItemRequestTooFast())
         {
-            Log.Warn(session.Tag, $"Purchase refused: catalog {catalogId}, option {option + 1}, payment {payment}");
-            await session.SendAsync(StorePacket.BuyResult(StorePacket.Failed), cancellationToken);
+            Log.Info(session.Tag, $"Purchase of catalog {catalogId} refused: sent too soon after the last request");
+            await session.SendAsync(StorePacket.Error(NetError.Inventory_FastRequest), cancellationToken);
             return;
         }
 
-        int price = entry.Gold[option];
+        if (!data.Catalog.TryGetValue(catalogId, out CatalogEntry? entry))
+        {
+            Log.Warn(session.Tag, $"Purchase refused: catalog {catalogId} is not in the store");
+            await session.SendAsync(StorePacket.Error(NetError.Store_NotExist), cancellationToken);
+            return;
+        }
+
+        // The client sends 1 as the last byte even for an item that only has an RT price (seen with catalog 2024):
+        // an option without a BP price is paid in RT.
+        if (payment == PayWithGold && option >= 0 && option < entry.Gold.Count && entry.Gold[option] <= 0
+            && option < entry.Cash.Count && entry.Cash[option] > 0)
+            payment = PayWithCash;
+
+        if (option < 0 || option >= entry.Gold.Count
+            || payment is not (PayWithGold or PayWithCash)
+            || (payment == PayWithCash && option >= entry.Cash.Count)
+            || !IsSold(entry, option, payment))
+        {
+            Log.Warn(session.Tag, $"Purchase refused: catalog {catalogId}, option {option + 1}, payment {payment}");
+            await session.SendAsync(StorePacket.Error(NetError.Store_InvalidItemInfo), cancellationToken);
+            return;
+        }
+
+        bool cash = payment == PayWithCash;
+        int price = cash ? entry.Cash[option] : entry.Gold[option];
+        string currency = cash ? "RT" : "BP";
         ushort quantity = (ushort)(option < entry.Count.Count ? Math.Max(1, entry.Count[option]) : 1);
         byte type = data.TypeOf(catalogId);
 
@@ -53,9 +77,10 @@ public sealed class StoreHandler : IMessageHandler
         InventoryItem? bought = null;
         session.Accounts.Update(session.Account.Id, account =>
         {
-            if (account.Gold < price) return;
+            if ((cash ? account.Cash : account.Gold) < price) return;
 
-            account.Gold -= price;
+            if (cash) account.Cash -= price;
+            else account.Gold -= price;
             bought = new InventoryItem
             {
                 Slot = account.FreeSlot(),
@@ -71,16 +96,26 @@ public sealed class StoreHandler : IMessageHandler
 
         if (bought is null)
         {
-            Log.Info(session.Tag, $"Purchase refused: catalog {catalogId} costs {price}, player has {session.Account.Gold}");
-            await session.SendAsync(StorePacket.BuyResult(StorePacket.Failed), cancellationToken);
+            Log.Info(session.Tag, $"Purchase refused: catalog {catalogId} costs {price} {currency}, player has {(cash ? session.Account.Cash : session.Account.Gold)}");
+            await session.SendAsync(StorePacket.Error(cash ? NetError.Store_NoCash : NetError.Store_NoGold), cancellationToken);
             return;
         }
 
-        Log.Info(session.Tag, $"Bought catalog {catalogId} x{quantity} for {price} gold ({session.Account.Gold} left)");
+        Log.Info(session.Tag, $"Bought catalog {catalogId} x{quantity} for {price} {currency} ({(cash ? session.Account.Cash : session.Account.Gold)} left)");
+        session.Accounts.RecordPurchase(session.Account.Id, catalogId, cash ? 0 : price, cash ? price : 0, "buy");
 
         await session.SendAsync(StorePacket.BuyResult(StorePacket.Success), cancellationToken);
-        await session.SendAsync(UserInfoPacket.Gold((uint)session.Account.Gold), cancellationToken);
+        await session.SendAsync(
+            cash ? UserInfoPacket.Cash((uint)session.Account.Cash) : UserInfoPacket.Gold((uint)session.Account.Gold), cancellationToken);
         await session.SendAsync(InventoryPacket.Added([bought]), cancellationToken);
+    }
+
+    private static bool IsSold(CatalogEntry entry, int option, byte payment)
+    {
+        int gold = entry.Gold[option];
+        int cash = option < entry.Cash.Count ? entry.Cash[option] : 0;
+        if (payment == PayWithCash) return cash > 0;
+        return gold > 0 || cash <= 0;
     }
 }
 
@@ -97,7 +132,7 @@ public sealed class RecordHandler : IMessageHandler
         switch (sub)
         {
             case MyRecords:
-                await session.SendAsync(RecordsPacket.Empty(), cancellationToken);
+                await session.SendAsync(RecordsPacket.Mine(session.Account), cancellationToken);
                 await session.SendAsync(RecordsPacket.End(), cancellationToken);
                 return;
 
@@ -113,7 +148,7 @@ public sealed class RecordHandler : IMessageHandler
                 }
 
                 Log.Info(session.Tag, $"Records of '{player.Nickname}'");
-                await session.SendAsync(RecordsPacket.OfPlayer(player.Nickname), cancellationToken);
+                await session.SendAsync(RecordsPacket.OfPlayer(player), cancellationToken);
                 await session.SendAsync(RecordsPacket.End(), cancellationToken);
                 return;
             }

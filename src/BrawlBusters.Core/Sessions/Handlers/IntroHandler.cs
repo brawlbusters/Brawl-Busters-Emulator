@@ -56,6 +56,13 @@ public sealed class IntroHandler : IMessageHandler
         while (reader.Remaining >= 2) values.Add(reader.ReadUInt16());
         shape.Values = [.. values];
 
+        // The first value is the body (FORM / FACE table of the client); a class or body the game does not have is refused.
+        if (shape.Class < 1 || shape.Class > Loadout.ClassCount || values.Count == 0 || !GameData.Instance.Items.ContainsKey(values[0]))
+        {
+            Log.Warn(session.Tag, $"Character refused: class {shape.Class}, shape [{string.Join(", ", values)}]");
+            return session.SendAsync(ErrorPacket.Show(NetError.ShapeDataError), cancellationToken);
+        }
+
         session.Accounts.Update(session.Account.Id, account => account.Character = shape);
         session.RefreshAccount();
 

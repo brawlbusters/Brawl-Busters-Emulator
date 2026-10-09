@@ -71,10 +71,46 @@ public sealed class RuleInfo
 
     [JsonPropertyName("rounds")]
     public int Rounds { get; set; } = 1;
+
+    [JsonPropertyName("waves")]
+    public int Waves { get; set; }
+
+    [JsonPropertyName("difficulty")]
+    public int Difficulty { get; set; }
+}
+
+public sealed class ChannelData
+{
+    [JsonPropertyName("id")]
+    public ushort Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("text")]
+    public string Text { get; set; } = "";
+
+    [JsonPropertyName("type")]
+    public byte Type { get; set; } = 4;
+
+    [JsonPropertyName("level_min")]
+    public byte LevelMin { get; set; } = 1;
+
+    [JsonPropertyName("level_max")]
+    public byte LevelMax { get; set; } = 99;
+
+    [JsonPropertyName("area")]
+    public string Area { get; set; } = "";
 }
 
 public sealed class MapFile
 {
+    [JsonPropertyName("channels")]
+    public List<ChannelData> Channels { get; set; } = [];
+
+    [JsonPropertyName("censored")]
+    public List<string> Censored { get; set; } = [];
+
     [JsonPropertyName("maps")]
     public List<MapInfo> Maps { get; set; } = [];
 

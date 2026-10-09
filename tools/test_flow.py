@@ -2,13 +2,13 @@ import struct
 import sys
 import time
 
-from test_client import Client, check, s8, ws
+from test_client import first_channel, Client, check, s8, ws
 
 CREATE_CHARACTER = bytes.fromhex("2d0403f6010400160000000000")
 TUTORIAL_DONE = bytes.fromhex("2e00")
 ENTER_SINGLE_LOBBY = bytes.fromhex("311c")
 ENTER_LOBBY = bytes.fromhex("3118")
-ENTER_CHANNEL = bytes.fromhex("3203") + struct.pack("<H", 1)
+ENTER_CHANNEL = bytes.fromhex("3203") + struct.pack("<H", first_channel())
 REFRESH_LOBBY = bytes.fromhex("3204") + struct.pack("<H", 1)
 UDP_OK = bytes.fromhex("3a00010200")
 KEEP_ALIVE = bytes.fromhex("0000")
@@ -68,13 +68,11 @@ def main():
 
     c.send(USER_INFO_TICK)
     c.send(ENTER_SINGLE_LOBBY)
-    for name, expected in (("single-play state", "12000100" "00"), ("single-play state", "1200010000"),
-                           ("sMode 8 (single lobby)", "0e08"), ("single-play state", "1200010000")):
+    for name, expected in (("sMode 8 (single lobby)", "0e08"), ("single-play state", "1200010000")):
         ok &= expect(c, name, bytes.fromhex(expected))
 
     c.send(ENTER_LOBBY)
-    for name, expected in (("single-play state", "1200010000"), ("single-play state", "1200010000"),
-                           ("sMode 3 (lobby)", "0e03"), ("sLobby 4 (opened)", "0f04")):
+    for name, expected in (("sMode 3 (lobby)", "0e03"), ("sLobby 4 (opened)", "0f04")):
         ok &= expect(c, name, bytes.fromhex(expected))
 
     c.send(ENTER_CHANNEL)

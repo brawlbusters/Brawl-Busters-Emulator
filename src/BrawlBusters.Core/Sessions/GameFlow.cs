@@ -3,6 +3,7 @@ using BrawlBusters.Core.Logging;
 using BrawlBusters.Core.Network;
 using BrawlBusters.Core.Protocol;
 using BrawlBusters.Core.Protocol.Packets;
+using BrawlBusters.Core.Security;
 
 namespace BrawlBusters.Core.Sessions;
 
@@ -11,6 +12,16 @@ public static partial class GameFlow
     public static async Task StartAsync(ClientSession session, CancellationToken cancellationToken)
     {
         Account account = session.Account;
+
+        if (session.ServerChangeChannel is { } arrivedFor)
+        {
+            Log.Info(LogChannel.Lobby, session.Tag, $"Server change complete: now on port {session.LocalPort} for channel {arrivedFor}");
+            await session.SendAsync(ServerPacket.ServerChangeComplete(), cancellationToken);
+            session.ChannelId = arrivedFor;
+            await session.SendAsync(ServerPacket.ChannelChanged(arrivedFor), cancellationToken);
+            await SendChannelContentsAsync(session, cancellationToken);
+            return;
+        }
 
         await session.SendAsync(ModePacket.Build(GameMode.Intro), cancellationToken);
         await session.SendAsync(KeepAlivePacket.Idle(), cancellationToken);
@@ -39,26 +50,43 @@ public static partial class GameFlow
 
     public static async Task EnterHomeAsync(ClientSession session, CancellationToken cancellationToken)
     {
+        if (session.Account.HasCharacter && session.Account.LevelRewardsUpTo < session.Account.DisplayLevel)
+        {
+            List<InventoryItem> granted = [];
+            session.Accounts.Update(session.Account.Id, account => granted = Rewards.GrantForLevels(account));
+            session.RefreshAccount();
+            if (granted.Count > 0)
+            {
+                Log.Info(session.Tag, $"Level rewards up to level {session.Account.DisplayLevel}: {granted.Count} item(s) - {string.Join(", ", granted.Select(item => item.ItemId))}");
+                await session.SendAsync(InventoryPacket.Added(granted), cancellationToken);
+                await SendCanUnlockAsync(session, cancellationToken);
+            }
+        }
+
         await session.SendAsync(ModePacket.Build(GameMode.Home), cancellationToken);
-        await session.SendAsync(UserInfoPacket.PartialAfterTutorial(), cancellationToken);
+        if (session.Account.HasCharacter) await ItemExpiry.SweepAsync(session, detail: true, cancellationToken);
+        await session.SendAsync(UserInfoPacket.HomeEntered(HomeStats.Of(session.Account), MissionBlock(session)), cancellationToken);
         await session.SendAsync(UserInfoPacket.PartialOnLobby(AllEquippedTables(session.Account)), cancellationToken);
         await SendChannelsAsync(session, cancellationToken);
     }
 
     public static async Task EnterSingleLobbyAsync(ClientSession session, CancellationToken cancellationToken)
     {
-        await session.SendAsync(SingleProgress(session), cancellationToken);
-        await session.SendAsync(SingleProgress(session), cancellationToken);
         await session.SendAsync(ModePacket.Build(GameMode.SingleLobby), cancellationToken);
         await session.SendAsync(SingleProgress(session), cancellationToken);
     }
 
     public static async Task StartSingleStageAsync(ClientSession session, ushort stage, CancellationToken cancellationToken)
     {
+        if (!GameData.Instance.SingleStages.ContainsKey(stage))
+        {
+            Log.Warn(session.Tag, $"Single play: stage {stage} is not in the stage table - refused");
+            await session.SendAsync(LobbyPacket.SinglePlayError((byte)NetError.SinglePlay_InvalidID), cancellationToken);
+            return;
+        }
+
         session.SingleStage = stage;
         session.SingleStageFinished = false;
-        if (!GameData.Instance.SingleStages.ContainsKey(stage))
-            Log.Warn(session.Tag, $"Single play: stage {stage} is not in the stage table (no reward will be paid)");
         await session.SendAsync(SingleProgress(session), cancellationToken);
         await session.SendAsync(ModePacket.Build(GameMode.SingleGame), cancellationToken);
         await session.SendAsync(LobbyPacket.SinglePlayStart(stage), cancellationToken);
@@ -131,8 +159,6 @@ public static partial class GameFlow
 
     public static async Task EnterLobbyAsync(ClientSession session, CancellationToken cancellationToken)
     {
-        await session.SendAsync(SingleProgress(session), cancellationToken);
-        await session.SendAsync(SingleProgress(session), cancellationToken);
         await session.SendAsync(ModePacket.Build(GameMode.Lobby), cancellationToken);
         await session.SendAsync(LobbyPacket.Opened(), cancellationToken);
     }
@@ -140,7 +166,7 @@ public static partial class GameFlow
     public static async Task ReturnHomeAsync(ClientSession session, CancellationToken cancellationToken)
     {
         await session.SendAsync(ModePacket.Build(GameMode.Home), cancellationToken);
-        await session.SendAsync(UserInfoPacket.PartialAfterTutorial(), cancellationToken);
+        await session.SendAsync(UserInfoPacket.HomeEntered(HomeStats.Of(session.Account), MissionBlock(session)), cancellationToken);
     }
 
     public static async Task EnterStoreAsync(ClientSession session, CancellationToken cancellationToken)
@@ -152,7 +178,10 @@ public static partial class GameFlow
     public static async Task EnterInventoryAsync(ClientSession session, CancellationToken cancellationToken)
     {
         await session.SendAsync(ModePacket.Build(GameMode.Inventory), cancellationToken);
-        await session.SendAsync(UserInfoPacket.PartialEmpty(), cancellationToken);
+        if (await ItemExpiry.SweepAsync(session, detail: false, cancellationToken))
+            await session.SendAsync(UserInfoPacket.PartialOnLobby(AllEquippedTables(session.Account)), cancellationToken);
+        else
+            await session.SendAsync(UserInfoPacket.PartialEmpty(), cancellationToken);
     }
 
     public static Task EnterRecordsAsync(ClientSession session, CancellationToken cancellationToken)
@@ -165,8 +194,12 @@ public static partial class GameFlow
         await session.SendAsync(Handlers.RankHandler.OwnStandingPacket(session), cancellationToken);
     }
 
-    public static Task EnterLadderAsync(ClientSession session, CancellationToken cancellationToken)
-        => session.SendAsync(ModePacket.Build(GameMode.Ladder), cancellationToken);
+    public static async Task EnterLadderAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        LadderForget(session);
+        await session.SendAsync(ModePacket.Build(GameMode.Ladder), cancellationToken);
+        await session.SendAsync(Handlers.LadderPacket.Data(session.Account, SyncLadderGrade(session)), cancellationToken);
+    }
 
     public static async Task EnterCapsuleMachineAsync(ClientSession session, CancellationToken cancellationToken)
     {
@@ -174,8 +207,52 @@ public static partial class GameFlow
         await session.SendAsync(InventoryPacket.List(session.Account.Items), cancellationToken);
     }
 
+    /// <summary>Why this player may not enter the channel, as the client's own error; null when he may.</summary>
+    private static NetError? ChannelRefusal(ClientSession session, ushort channelId)
+    {
+        if (channelId == session.ChannelId) return null;
+
+        if (ChannelDirectory.Channels.Count > 0
+            && (!ChannelDirectory.Exists(channelId) || !ChannelDirectory.MayEnter(session.Account, channelId)))
+            return NetError.Lobby_ChangeChannel;
+
+        if (ChannelDirectory.LevelRefusal(session.Account, channelId) is { } wrongLevel) return wrongLevel;
+
+        bool full = BotDirector.StatusOf(channelId, SessionRegistry.InChannel(channelId)) == ChannelStatus.Max;
+        return full && !session.Account.Can(Permission.EnterFullChannel) ? NetError.Lobby_ChannelFull : null;
+    }
+
     public static async Task EnterChannelAsync(ClientSession session, ushort channelId, CancellationToken cancellationToken)
     {
+        if (ChannelRefusal(session, channelId) is { } refusal)
+        {
+            Log.Info(LogChannel.Lobby, session.Tag, $"Channel {channelId} refused (level {session.Account.DisplayLevel}): {refusal}");
+            await session.SendAsync(LobbyPacket.Error(refusal), cancellationToken);
+
+            // A player who is in no channel yet is put into the first one he may enter, so he is never left without a lobby.
+            ushort open = session.ChannelId != 0
+                ? (ushort)0
+                : ChannelDirectory.Channels.Select(channel => channel.Id).FirstOrDefault(id => ChannelRefusal(session, id) is null);
+            if (open == 0) return;
+            channelId = open;
+        }
+
+        if (ChannelDirectory.PortOf(channelId) is { } port && port != session.LocalPort)
+        {
+            if (!session.Settings.LobbyPorts.Contains(port))
+            {
+                Log.Warn(LogChannel.Lobby, session.Tag, $"Channel {channelId} is configured for port {port}, which is not a lobby port - server change failed");
+                await session.SendAsync(ServerPacket.ServerChangeFailed(), cancellationToken);
+                return;
+            }
+
+            uint key = ServerChanges.Begin(session.Account.Id, channelId);
+            var server = new System.Net.IPEndPoint(System.Net.IPAddress.Parse(session.Settings.PublicAddress), port);
+            Log.Info(LogChannel.Lobby, session.Tag, $"Channel {channelId} lives on port {port}: server change started (from port {session.LocalPort})");
+            await session.SendAsync(ServerPacket.ServerChange(channelId, server, key), cancellationToken);
+            return;
+        }
+
         session.ChannelId = channelId;
         await session.SendAsync(ServerPacket.ChannelChanged(channelId), cancellationToken);
         await SendChannelContentsAsync(session, cancellationToken);
@@ -183,6 +260,18 @@ public static partial class GameFlow
 
     public static async Task RefreshLobbyAsync(ClientSession session, ushort channelId, CancellationToken cancellationToken)
     {
+        // The client also changes channel with this request (cLobby 04 with another channel id), so the same rules apply.
+        if (ChannelRefusal(session, channelId) is { } refusal)
+        {
+            ushort fallback = session.ChannelId != 0
+                ? session.ChannelId
+                : ChannelDirectory.Channels.Select(channel => channel.Id).FirstOrDefault(id => ChannelRefusal(session, id) is null);
+            Log.Info(LogChannel.Lobby, session.Tag, $"Channel {channelId} refused (level {session.Account.DisplayLevel}): {refusal} - staying in {fallback}");
+            await session.SendAsync(LobbyPacket.Error(refusal), cancellationToken);
+            if (fallback == 0) return;
+            channelId = fallback;
+        }
+
         session.ChannelId = channelId;
         await SendChannelsAsync(session, cancellationToken);
         await session.SendAsync(ServerPacket.ChannelChanged(channelId), cancellationToken);
@@ -197,8 +286,49 @@ public static partial class GameFlow
         return tables;
     }
 
+    /// <summary>Brings the stored gem rank in line with the current rank boundaries; returns the boundaries.</summary>
+    private static ushort[] SyncLadderGrade(ClientSession session)
+    {
+        ushort[] table = LadderGrades.Table(session);
+        byte grade = LadderGrades.GradeOf(session.Account.LadderPoints, table);
+        if (grade != session.Account.GemRank)
+        {
+            session.Accounts.Update(session.Account.Id, account => account.GemRank = grade);
+            session.RefreshAccount();
+        }
+        return table;
+    }
+
+    public static byte[] Flags(ClientSession session)
+    {
+        byte[] flags = new byte[UserInfoPacket.FlagsSize];
+        Account account = session.Account;
+        flags[UserInfoPacket.GradeFlag] = (byte)account.Grade;
+        if (account.Can(Permission.ObserveMatches)) flags[UserInfoPacket.GameMasterFlag] = 1;
+        var settings = session.Settings;
+        flags[UserInfoPacket.NewTagsFlag] = (byte)((settings.NewTagMyLocker ? 1 : 0) | (settings.NewTagSinglePlay ? 2 : 0) | (settings.NewTagLadder ? 4 : 0));
+        if (account.Items.Any(item => item.Type == ItemType.ClassUnlock)) flags[UserInfoPacket.CanUnlockClassFlag] = 1;
+        return flags;
+    }
+
+    public static Task SendCanUnlockAsync(ClientSession session, CancellationToken cancellationToken)
+        => session.SendAsync(UserInfoPacket.FlagChanged(UserInfoPacket.CanUnlockClassFlag, Flags(session)[UserInfoPacket.CanUnlockClassFlag]), cancellationToken);
+
+    private static byte[] MissionBlock(ClientSession session)
+    {
+        bool assigned = false;
+        session.Accounts.Update(session.Account.Id, account => assigned = DailyMissions.Ensure(account));
+        if (assigned)
+        {
+            session.RefreshAccount();
+            Log.Info(session.Tag, $"Daily missions: {string.Join(", ", session.Account.Missions.Select(mission => mission.Id))}");
+        }
+        return DailyMissions.Block(session.Account);
+    }
+
     private static Task SendPlayerRecordAsync(ClientSession session, CancellationToken cancellationToken)
     {
+        SyncLadderGrade(session);
         Account account = session.Account;
         CharacterShape shape = account.Character ?? new CharacterShape();
         return session.SendAsync(
@@ -214,21 +344,48 @@ public static partial class GameFlow
                 (uint)account.Experience,
                 (uint)account.Gold,
                 (uint)account.Cash,
-                (uint)account.Gem),
+                LadderRating.FromPoints(account.LadderPoints),
+                account.OwnedClassMask(),
+                Flags(session),
+                MissionBlock(session),
+                homeStats: HomeStats.Of(account)),
             cancellationToken);
+    }
+
+    public static async Task PushChannelStatesAsync()
+    {
+        foreach (ClientSession session in SessionRegistry.InLobbies())
+        {
+            try
+            {
+                await session.SendAsync(ServerPacket.ChannelStates(ChannelDirectory.Build(session.Settings, session.Account)), CancellationToken.None);
+            }
+            catch (Exception exception) when (exception is IOException or ObjectDisposedException)
+            {
+            }
+        }
     }
 
     private static async Task SendChannelsAsync(ClientSession session, CancellationToken cancellationToken)
     {
-        IReadOnlyList<ChannelInfo> channels = ChannelDirectory.Build(session.Settings);
+        IReadOnlyList<ChannelInfo> channels = ChannelDirectory.Build(session.Settings, session.Account);
+        if (session.Settings.SeparateChannelsByCountry)
+            await session.SendAsync(GlobalSyncPacket.State(GlobalSyncPacket.SeparateChannelsByCountry), cancellationToken);
         await session.SendAsync(ServerPacket.ChannelList(channels), cancellationToken);
         await session.SendAsync(ServerPacket.ChannelStates(channels), cancellationToken);
     }
 
+    /// <summary>The number the lobby of a channel shows: the players in it, plus the simulated crowd when that is switched on.</summary>
+    public static ushort LobbyPlayerCount(ushort channelId)
+        => (ushort)(Math.Max(1, SessionRegistry.InChannel(channelId)) + BotDirector.InLobby(channelId));
+
     private static async Task SendChannelContentsAsync(ClientSession session, CancellationToken cancellationToken)
     {
-        ushort players = (ushort)(1 + BotDirector.InLobby(session.ChannelId));
+        ushort players = LobbyPlayerCount(session.ChannelId);
+        session.LobbyPlayers = players;
         await session.SendAsync(LobbyPacket.PlayerCount(players), cancellationToken);
-        await session.SendAsync(LobbyPacket.RoomList(RoomRegistry.Instance.InChannel(session.ChannelId)), cancellationToken);
+        IReadOnlyList<Room> rooms = RoomRegistry.Instance.InChannel(session.ChannelId);
+        await session.SendAsync(LobbyPacket.RoomList(rooms), cancellationToken);
+        LobbyFeed.Remember(session, rooms);
     }
 }

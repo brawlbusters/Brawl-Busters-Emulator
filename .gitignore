@@ -3,3 +3,12 @@ obj/
 .vs/
 __pycache__/
 logs/
+
+# local only: database server and its data, backups, accounts, machine-specific settings
+database/
+backup/
+data/accounts.json
+config/emulator.local.json
+play-online.bat
+*.before-server-change
+*.before-web-change

@@ -1,21 +1,64 @@
 {
   "PublicAddress": "127.0.0.1",
-  "AuthPorts": [
-    25100,
-    25110
+  "LobbyPorts": [
+    27100,
+    27110
   ],
-  "MainPort": 25120,
-  "ChatPort": 25900,
-  "CastPort": 25200,
-  "LogPackets": true,
+  "RelayPort": 27120,
+  "ChatPort": 27900,
+  "WebPort": 27180,
+  "SeparateChannelsByCountry": true,
+  "Database": {
+    "Provider": "MariaDb",
+    "Host": "127.0.0.1",
+    "Port": 3306,
+    "Name": "rockserver",
+    "User": "rock",
+    "Password": ""
+  },
+  "Logging": {
+    "ConsoleLevel": "Info",
+    "FileLevel": "Debug",
+    "Channels": {
+      "General": true,
+      "Network": true,
+      "Packets": true,
+      "Session": true,
+      "Lobby": true,
+      "Room": true,
+      "Match": true,
+      "Chat": true,
+      "Bots": true,
+      "Database": true,
+      "Commands": true
+    }
+  },
+  "Staff": {},
   "Channels": [
     {
-      "Id": 1,
-      "Name": "Channel 1"
+      "Id": 7201
     },
     {
-      "Id": 2,
-      "Name": "Channel 2"
+      "Id": 7301
+    },
+    {
+      "Id": 7401
+    },
+    {
+      "Id": 7501
+    },
+    {
+      "Id": 7601
     }
-  ]
+  ],
+  "Bots": {
+    "Enabled": false,
+    "Count": 30,
+    "JoinPlayerRooms": true,
+    "ShowOnLeaderboard": false,
+    "OpenRooms": false,
+    "FillChannels": false,
+    "ChannelCapacity": 200,
+    "FillSeconds": 120
+  }
 }

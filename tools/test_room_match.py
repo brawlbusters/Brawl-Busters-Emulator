@@ -5,7 +5,7 @@ import struct
 import sys
 import time
 
-from test_client import Client, check, ws
+from test_client import first_channel, Client, check, ws
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CAPTURE = os.path.join(ROOT, "logs", "capture-20261007-211238.log")
@@ -66,9 +66,9 @@ def main():
     for _ in range(5):
         c.recv()
     c.send(bytes.fromhex("3118"))
-    for _ in range(4):
+    for _ in range(2):
         c.recv()
-    c.send(bytes.fromhex("3203") + struct.pack("<H", 1))
+    c.send(bytes.fromhex("3203") + struct.pack("<H", first_channel()))
     for _ in range(3):
         c.recv()
 
@@ -124,15 +124,19 @@ def main():
     compare("match running: sMode 11", 80, "sMode")
 
     c.send(bytes.fromhex("361304000000"))
-    got = c.recv()
-    ok &= check("match ended: empty record update", got == bytes.fromhex("0901") + bytes(10), got.hex())
-
     c.send(bytes.fromhex("360a04000000"))
+    replies = []
+    while not replies or replies[-1][:2] != bytes.fromhex("1503"):
+        replies.append(c.recv())
+    ok &= check("match closed: sMode 12 (result screen) and sGame 03 for the one player",
+                bytes.fromhex("0e12") in replies and replies[-1][2:4] == bytes.fromhex("0101"), str([r.hex()[:8] for r in replies]))
+
+    c.send(bytes.fromhex("3b03"))
     got = c.recv()
     state_at = 3 + len(ws(TITLE)) + 3
-    ok &= check("match closed: room state back to waiting", got[:3] == bytes.fromhex("10081f") and got[state_at] == 0, got[:8].hex())
+    ok &= check("result closed: room state back to waiting", got[:3] == bytes.fromhex("10081f") and got[state_at] == 0, got[:8].hex())
     got = c.recv()
-    ok &= check("match closed: sMode 0C (waiting room)", got == bytes.fromhex("0e0c"), got.hex())
+    ok &= check("result closed: sMode 0C (waiting room)", got == bytes.fromhex("0e0c"), got.hex())
 
     c.send(bytes.fromhex("3306"))
     got = c.recv()

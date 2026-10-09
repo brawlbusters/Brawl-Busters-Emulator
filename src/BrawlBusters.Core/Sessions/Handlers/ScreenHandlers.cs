@@ -1,3 +1,4 @@
+using BrawlBusters.Core.Security;
 using BrawlBusters.Core.Data;
 using BrawlBusters.Core.Logging;
 using BrawlBusters.Core.Network;
@@ -30,6 +31,8 @@ public sealed class TutorialHandler : IMessageHandler
 
 public sealed class ModeHandler : IMessageHandler
 {
+    private const byte RankedChannelType = 5;
+
     public MsgCategory Category => MsgCategory.cMode;
 
     public Task HandleAsync(ClientSession session, PacketReader reader, CancellationToken cancellationToken)
@@ -51,8 +54,20 @@ public sealed class ModeHandler : IMessageHandler
                 Log.Info(session.Tag, "Opening the leaderboard");
                 return GameFlow.EnterRankingAsync(session, cancellationToken);
             case ModeRequest.EnterLadder:
+            {
+                // Ranked play has the level range of the client's ranked channels (channel type 5).
+                session.RefreshAccount();
+                byte needed = GameData.Instance.Channels.Values.Where(channel => channel.Type == RankedChannelType)
+                    .Select(channel => channel.LevelMin).DefaultIfEmpty((byte)0).Min();
+                if (session.Account.DisplayLevel < needed && !session.Account.Can(Permission.SeeAllChannels))
+                {
+                    Log.Info(session.Tag, $"Ladder screen refused: level {session.Account.DisplayLevel}, ranked play starts at {needed}");
+                    return session.SendAsync(ModePacket.Refused(NetError.Menu_Ladder_LevelLimit), cancellationToken);
+                }
+
                 Log.Info(session.Tag, "Opening the ladder (ranked) screen");
                 return GameFlow.EnterLadderAsync(session, cancellationToken);
+            }
             case ModeRequest.EnterLobby:
                 Log.Info(session.Tag, "Entering lobby");
                 return GameFlow.EnterLobbyAsync(session, cancellationToken);
@@ -110,6 +125,13 @@ public sealed class RoomHandler : IMessageHandler
     private const byte GuestReady = 0x0A;
     private const byte Ready = 0x0C;
     private const byte Start = 0x0E;
+    private const byte ReportPing = 0x0B;
+    private const byte AdjustGame = 0x0F;
+    private const byte FindLadderMatch = 0x12;
+    private const byte CancelFindLadderMatch = 0x13;
+    private const byte ObserverReady = 0x18;
+    private const byte IntrudeGame = 0x14;
+    private const byte ObserveGame = 0x15;
     private const byte Observe = 0x16;
     private const byte Play = 0x17;
     private const byte Report = 0x10;
@@ -153,6 +175,21 @@ public sealed class RoomHandler : IMessageHandler
                 return Task.CompletedTask;
             case Observe:
                 return GameFlow.RoomObserveRequestedAsync(session, room, cancellationToken);
+            case FindLadderMatch:
+                return GameFlow.LadderFindMatchAsync(session, room, cancellationToken);
+            case CancelFindLadderMatch:
+                return GameFlow.LadderCancelFindAsync(session, room, cancellationToken);
+            case ReportPing:
+                return GameFlow.RoomPingAsync(session, room, reader.ReadUInt16(), cancellationToken);
+            case AdjustGame:
+                return GameFlow.RoomAdjustAsync(session, room, cancellationToken);
+            case ObserverReady:
+                Log.Info(session.Tag, $"Room {room.Id}: observer is {(reader.ReadByte() != 0 ? "ready" : "not ready")}");
+                return Task.CompletedTask;
+            case IntrudeGame:
+                return GameFlow.RoomIntrudeAsync(session, room, asObserver: false, cancellationToken);
+            case ObserveGame:
+                return GameFlow.RoomIntrudeAsync(session, room, asObserver: true, cancellationToken);
             case Play:
                 return GameFlow.RoomPlayRequestedAsync(session, room, cancellationToken);
             case Ready:
@@ -225,6 +262,12 @@ public sealed class HostHandler : IMessageHandler
             return GameFlow.GamePlayerEnteredAsync(session, room, playerId, cancellationToken);
         }
 
+        if (sub == MatchEvent && body.Length > EventOffset && session.Room is { } current)
+        {
+            GameFlow.HostEventReported(session, current, body[EventOffset], body.AsSpan(EventOffset + 1).ToArray());
+            return Task.CompletedTask;
+        }
+
         if (sub == MatchEnded)
         {
             Log.Info(session.Tag, "Match ended");
@@ -234,7 +277,9 @@ public sealed class HostHandler : IMessageHandler
         if (sub == MatchResults)
         {
             Log.Info(session.Tag, $"Match results: {Log.Hex(body)}");
-            return Task.CompletedTask;
+            return session.Room is { } finished && body.Length > EventOffset
+                ? GameFlow.MatchResultsAsync(session, finished, body.AsSpan(EventOffset).ToArray(), cancellationToken)
+                : Task.CompletedTask;
         }
 
         if (sub == MatchClosed && session.Room is not null)
@@ -270,6 +315,11 @@ public sealed class LobbyHandler : IMessageHandler
             }
             case LobbyRequest.Refresh:
                 return GameFlow.RefreshLobbyAsync(session, reader.ReadUInt16(), cancellationToken);
+            case LobbyRequest.GmObserve:
+            {
+                ushort watched = reader.ReadUInt16();
+                return GameFlow.GmObserveAsync(session, watched, cancellationToken);
+            }
             case LobbyRequest.RoomInfo:
                 return GameFlow.RoomInfoRequestedAsync(session, reader.ReadUInt16(), cancellationToken);
             case LobbyRequest.JoinRoom:

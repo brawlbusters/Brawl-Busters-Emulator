@@ -115,7 +115,7 @@ def main():
 
     c.send(bytes.fromhex("3f00244e0101"))
     got = c.recv()
-    ok &= check("capsule pull without enough BP is refused", got == bytes.fromhex("1e00000000"), got.hex())
+    ok &= check("capsule pull without enough BP is refused: sCapsuleMachine 01 Store_NoGold (55)", got == bytes.fromhex("1e0137"), got.hex())
 
     c.send(bytes.fromhex("2f0f0800"))
     got = c.recv()

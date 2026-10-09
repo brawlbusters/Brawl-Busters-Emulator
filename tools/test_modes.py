@@ -5,7 +5,7 @@ import struct
 import sys
 import time
 
-from test_client import Client, check, ws
+from test_client import first_channel, Client, check, ws
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = json.load(open(os.path.join(ROOT, "data", "game", "maps.json"), encoding="utf-8"))
@@ -34,9 +34,9 @@ def enter_channel():
     for _ in range(5):
         c.recv()
     c.send(bytes.fromhex("3118"))
-    for _ in range(4):
+    for _ in range(2):
         c.recv()
-    c.send(bytes.fromhex("3203") + struct.pack("<H", 1))
+    c.send(bytes.fromhex("3203") + struct.pack("<H", first_channel()))
     replies = [c.recv() for _ in range(3)]
     return c, uid, replies
 

@@ -3,12 +3,12 @@ using BrawlBusters.Core.Logging;
 using BrawlBusters.Core.Network;
 using BrawlBusters.Core.Protocol;
 using BrawlBusters.Core.Protocol.Packets;
+using BrawlBusters.Core.Security;
 
 namespace BrawlBusters.Core.Sessions.Handlers;
 
 public sealed class DevCommandHandler : IMessageHandler
 {
-    private const AccountGrade RequiredGrade = AccountGrade.Developer;
     private const byte AddExperience = 0;
     private const byte AddGold = 1;
 
@@ -20,11 +20,9 @@ public sealed class DevCommandHandler : IMessageHandler
         uint amount = reader.ReadUInt32();
 
         session.RefreshAccount();
-        AccountGrade grade = session.Account.Grade;
-
-        if (grade < RequiredGrade)
+        if (!session.Account.Can(Permission.GiveCurrency))
         {
-            Log.Warn(session.Tag, $"Dev command {command} ({amount}) refused: grade {grade}, needs {RequiredGrade}");
+            Log.Warn(LogChannel.Commands, session.Tag, $"Dev command {command} ({amount}) refused: grade {session.Account.Grade}");
             return Task.CompletedTask;
         }
 
@@ -34,7 +32,18 @@ public sealed class DevCommandHandler : IMessageHandler
             return Task.CompletedTask;
         }
 
-        StaffCommands.ApplyAmount(session.Accounts, session.Account.Id, gold: command == AddGold, amount);
+        session.Accounts.Update(session.Account.Id, account =>
+        {
+            if (command == AddGold)
+            {
+                account.Gold = (int)Math.Min(int.MaxValue, account.Gold + (long)amount);
+            }
+            else
+            {
+                account.Experience = (int)Math.Min(int.MaxValue, account.Experience + (long)amount);
+                account.Level = GameData.Instance.LevelForExp(account.Experience, account.Level);
+            }
+        });
         session.RefreshAccount();
 
         Account updated = session.Account;

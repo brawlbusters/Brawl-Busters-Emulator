@@ -106,6 +106,8 @@ def main():
     left, state = a.recv(), a.recv()
     ok &= check("guest left: host gets sRoom 07 with B's id", left == b"\x10\x07" + b_id, left.hex())
     ok &= check("guest left: host's room state is back to 1 player", state[p + 1] == 1, state[p:p + 4].hex())
+    removed = a.recv()
+    ok &= check("guest left a running match: host gets sHost 01 (player removed)", removed[:2] == b"\x14\x01" and removed[6:8] == b"\x02\x02", removed.hex())
     replies = drain(b, 4)
     ok &= check("guest left: guest is sent to the lobby (sMode 03)", b"\x0e\x03" in replies)
 
@@ -118,8 +120,9 @@ def main():
     drain(b, 3)
     drain(a, 2)
     a.send(bytes.fromhex("3306"))
-    replies = drain(b, 3)
-    ok &= check("host left the waiting room: the guest is sent to the lobby", replies[0] == b"\x0e\x03", replies[0].hex())
+    replies = drain(b, 4)
+    ok &= check("host left the waiting room: the guest is told the room is gone (sNotice 06)", replies[0][:2] == bytes([0x1a, 6]), replies[0].hex())
+    ok &= check("host left the waiting room: the guest is sent to the lobby", replies[1] == bytes([0x0e, 3]), replies[1].hex())
     drain(a, 3)
 
     target = None

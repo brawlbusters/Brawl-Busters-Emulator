@@ -21,6 +21,9 @@ public static class ItemType
     public const byte CostumeReinforce = 15;
     public const byte WeaponPerk = 16;
     public const byte Converter = 17;
+    public const byte JackpotTicket = 13;
+    public const byte ClassUnlock = 18;
+    public const byte SlotChanger = 23;
     public const byte GoldPack = 19;
     public const byte NicknameChanger = 27;
 
@@ -32,10 +35,12 @@ public static class ItemType
     public const int EquipTableSize = 12;
 }
 
-public readonly record struct ItemInfo(byte Type, byte Class, bool Stackable, ushort ConvertR, ushort ConvertLR)
+/// <param name="MinLevel">MINIMUM_LEVEL of the item table: "Requires Level N or higher". Below it the item stays inactive.</param>
+public readonly record struct ItemInfo(byte Type, byte Class, bool Stackable, ushort ConvertR, ushort ConvertLR, byte MinLevel)
 {
     public static ItemInfo FromArray(int[] values) => new(
-        (byte)Get(values, 0), (byte)Get(values, 1), Get(values, 2) != 0, (ushort)Get(values, 3), (ushort)Get(values, 4));
+        (byte)Get(values, 0), (byte)Get(values, 1), Get(values, 2) != 0, (ushort)Get(values, 3), (ushort)Get(values, 4),
+        (byte)Get(values, 5));
 
     private static int Get(int[] values, int index) => index < values.Length ? values[index] : 0;
 }
@@ -105,6 +110,12 @@ public sealed class MiscItem
     [JsonPropertyName("gold")]
     public int Gold { get; set; }
 
+    [JsonPropertyName("bonus_gold")]
+    public int BonusGold { get; set; }
+
+    [JsonPropertyName("bonus_exp")]
+    public int BonusExp { get; set; }
+
     [JsonPropertyName("parts")]
     public Dictionary<string, UpgradeTable> Parts { get; set; } = [];
 }
@@ -128,6 +139,69 @@ public sealed class PayoutRule
 
     [JsonPropertyName("time_min")]
     public int TimeMin { get; set; }
+
+    [JsonPropertyName("time_max")]
+    public int TimeMax { get; set; }
+
+    [JsonPropertyName("difficulty")]
+    public List<double> Difficulty { get; set; } = [];
+
+    [JsonPropertyName("balance")]
+    public List<double> Balance { get; set; } = [];
+
+    [JsonPropertyName("crown")]
+    public List<double> Crown { get; set; } = [];
+
+    [JsonPropertyName("wave")]
+    public double Wave { get; set; }
+
+    [JsonPropertyName("star")]
+    public double Star { get; set; }
+
+    [JsonPropertyName("jessium")]
+    public double Jessium { get; set; }
+
+    [JsonPropertyName("kill")]
+    public double Kill { get; set; }
+
+    [JsonPropertyName("assist")]
+    public double Assist { get; set; }
+
+    [JsonPropertyName("revive")]
+    public double Revive { get; set; }
+
+    [JsonPropertyName("survival")]
+    public double Survival { get; set; }
+
+    [JsonPropertyName("attack")]
+    public double Attack { get; set; }
+
+    [JsonPropertyName("perfect")]
+    public double Perfect { get; set; }
+
+    [JsonPropertyName("immortal")]
+    public double Immortal { get; set; }
+
+    [JsonPropertyName("longlife")]
+    public double LongLife { get; set; }
+
+    [JsonPropertyName("lastkill")]
+    public double LastKill { get; set; }
+
+    [JsonPropertyName("firstkill")]
+    public double FirstKill { get; set; }
+
+    [JsonPropertyName("combo")]
+    public double Combo { get; set; }
+
+    [JsonPropertyName("item")]
+    public double Item { get; set; }
+
+    [JsonPropertyName("charger")]
+    public double Charger { get; set; }
+
+    [JsonPropertyName("revenge")]
+    public double Revenge { get; set; }
 }
 
 public sealed class ModePayout
@@ -161,6 +235,39 @@ public sealed class ResultFile
 
     [JsonPropertyName("rewards")]
     public Dictionary<uint, int[]> Rewards { get; set; } = [];
+
+    [JsonPropertyName("level_rewards")]
+    public Dictionary<byte, List<uint>> LevelRewards { get; set; } = [];
+
+    [JsonPropertyName("missions")]
+    public List<MissionInfo> Missions { get; set; } = [];
+}
+
+public sealed class MissionInfo
+{
+    [JsonPropertyName("id")]
+    public ushort Id { get; set; }
+
+    [JsonPropertyName("grade")]
+    public int Grade { get; set; }
+
+    [JsonPropertyName("type")]
+    public int Type { get; set; }
+
+    [JsonPropertyName("mode")]
+    public int Mode { get; set; }
+
+    [JsonPropertyName("class")]
+    public int Class { get; set; }
+
+    [JsonPropertyName("count")]
+    public int Count { get; set; }
+
+    [JsonPropertyName("rewards")]
+    public List<uint> Rewards { get; set; } = [];
+
+    [JsonPropertyName("prob")]
+    public List<int> Prob { get; set; } = [];
 }
 
 public sealed class SingleStage

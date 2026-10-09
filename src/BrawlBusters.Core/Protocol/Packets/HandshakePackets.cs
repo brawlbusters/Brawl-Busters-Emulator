@@ -69,13 +69,17 @@ public sealed class ClientTransferInfo
     public string Nickname { get; private init; } = "";
     public ulong SessionKey { get; private init; }
 
+    /// <summary>The second u16 and the second u32 of the packet (client builder 0x5BEF10); in a server change they repeat what sTransServer said.</summary>
+    public ushort Channel { get; private init; }
+    public uint Key { get; private init; }
+
     public static ClientTransferInfo Parse(byte[] packet)
     {
         var reader = new PacketReader(packet, offset: 1);
         ushort version = reader.ReadUInt16();
-        reader.ReadUInt16();
+        ushort channel = reader.ReadUInt16();
         reader.ReadUInt32();
-        reader.ReadUInt32();
+        uint key = reader.ReadUInt32();
         string loginId = reader.ReadString();
         string nickname = reader.ReadWideString();
         reader.ReadByte();
@@ -83,6 +87,8 @@ public sealed class ClientTransferInfo
         return new ClientTransferInfo
         {
             PacketVersion = version,
+            Channel = channel,
+            Key = key,
             LoginId = loginId,
             Nickname = nickname,
             SessionKey = reader.ReadUInt64(),

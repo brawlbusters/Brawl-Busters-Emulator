@@ -13,6 +13,13 @@ public sealed class InventoryHandler : IMessageHandler
     public Task HandleAsync(ClientSession session, PacketReader reader, CancellationToken cancellationToken)
     {
         var request = (InventoryRequest)reader.ReadByte();
+        if (request is not (InventoryRequest.Equip or InventoryRequest.Unequip or InventoryRequest.CheckNickname) && session.IsItemRequestTooFast())
+        {
+            Log.Info(session.Tag, $"cInventory 0x{(byte)request:X2} refused: sent too soon after the last request");
+            reader.ReadToEnd();
+            return session.SendAsync(InventoryPacket.Failed(NetError.Inventory_FastRequest), cancellationToken);
+        }
+
         switch (request)
         {
             case InventoryRequest.Equip:
@@ -28,7 +35,14 @@ public sealed class InventoryHandler : IMessageHandler
             case InventoryRequest.Reinforce:
                 return InventoryActions.ReinforceAsync(session, reader.ReadUInt16(), reader.ReadUInt16(), cancellationToken);
             case InventoryRequest.ReinforceInsured:
-                return InventoryActions.ReinforceAsync(session, reader.ReadUInt16(), reader.ReadUInt16(), cancellationToken);
+            {
+                // cInventory 12 (client 0x5AA060): u16 item, u16 stone, u8, u8 - the two "prevent" buttons of the reinforce box.
+                ushort item = reader.ReadUInt16();
+                ushort stone = reader.ReadUInt16();
+                bool keepLevel = !reader.EndOfData && reader.ReadByte() != 0;
+                bool keepItem = !reader.EndOfData && reader.ReadByte() != 0;
+                return InventoryActions.ReinforceAsync(session, item, stone, cancellationToken, keepLevel, keepItem);
+            }
             case InventoryRequest.Convert:
                 return InventoryActions.ConvertAsync(session, reader.ReadUInt16(), reader.ReadUInt16(), cancellationToken);
             case InventoryRequest.Extend:
@@ -56,7 +70,9 @@ public sealed class InventoryHandler : IMessageHandler
     private static async Task EquipAsync(ClientSession session, ushort slot, bool wear, CancellationToken cancellationToken)
     {
         int classIndex = Loadout.ClassIndex(session.Account.Character?.Class ?? 1);
+        NetError? reason = null;
         string? refusal = null;
+        bool activated = false;
 
         session.Accounts.Update(session.Account.Id, account =>
         {
@@ -72,6 +88,13 @@ public sealed class InventoryHandler : IMessageHandler
             }
 
             if (!Loadout.IsWearable(item.Type)) { refusal = $"item type {item.Type} cannot be worn"; return; }
+            if (!GameData.Instance.LevelAllows(item.ItemId, account.DisplayLevel))
+            {
+                refusal = "the item needs a higher level";
+                reason = NetError.Inventory_EquipInactiveItem;
+                return;
+            }
+            if (item.HasExpired) { refusal = "the item has expired"; return; }
             if (GameData.Instance.Items.TryGetValue(item.ItemId, out ItemInfo info) && info.Class != 0 && info.Class != classIndex + 1)
             {
                 refusal = $"item is for class {info.Class}";
@@ -81,11 +104,24 @@ public sealed class InventoryHandler : IMessageHandler
             if (item.Type is ItemType.Upper or ItemType.UpperAlt)
                 equipped[ItemType.Upper] = equipped[ItemType.UpperAlt] = 0;
             equipped[item.Type] = slot;
+            if (item.State == 0)
+            {
+                item.State = 1;
+                activated = true;
+            }
         });
         session.RefreshAccount();
+        if (activated)
+        {
+            Log.Info(session.Tag, $"Item in slot {slot} activated");
+            await session.SendAsync(NoticePacket.ItemActivated(slot), cancellationToken);
+        }
 
         if (refusal is not null)
+        {
             Log.Warn(session.Tag, $"{(wear ? "Equip" : "Unequip")} slot {slot} refused: {refusal}");
+            await session.SendAsync(ErrorPacket.Show(reason ?? (wear ? NetError.Item_Equip : NetError.Item_UnEquip)), cancellationToken);
+        }
         else
             Log.Info(session.Tag, $"{(wear ? "Equipped" : "Took off")} the item in slot {slot} (class {classIndex + 1})");
 
@@ -100,6 +136,7 @@ public sealed class InventoryHandler : IMessageHandler
         GameData data = GameData.Instance;
         var changed = new List<InventoryItem>();
         string? refusal = null;
+        bool jackpot = false;
 
         session.Accounts.Update(session.Account.Id, account =>
         {
@@ -117,7 +154,7 @@ public sealed class InventoryHandler : IMessageHandler
                 if (key is null) { refusal = $"key {package.Key} missing"; return; }
             }
 
-            List<FixedItem> contents = Contents(data, package);
+            List<FixedItem> contents = Contents(data, package, out jackpot);
             if (contents.Count == 0) { refusal = "package has no contents"; return; }
 
             bool boxUsedUp = Consume(account, box);
@@ -156,16 +193,29 @@ public sealed class InventoryHandler : IMessageHandler
         await session.SendAsync(InventoryPacket.Added(changed.OrderBy(item => item.Slot).ToList()), cancellationToken);
         await session.SendAsync(InventoryPacket.PackageOpened(true), cancellationToken);
         await session.SendAsync(InventoryPacket.List(session.Account.Items), cancellationToken);
+
+        if (jackpot)
+        {
+            Log.Info(session.Tag, "Lucky box jackpot: a Jackpot ticket was added");
+            await SessionRegistry.BroadcastAsync(() => UserMsgPacket.SystemMessage($"JACKPOT! {session.Account.Nickname} hit the jackpot in a lucky box!"));
+        }
     }
 
-    private static List<FixedItem> Contents(GameData data, PackageInfo package)
+    private static List<FixedItem> Contents(GameData data, PackageInfo package, out bool jackpot)
     {
+        jackpot = false;
         var all = new List<FixedItem>();
         if (package.IsLuckyBox)
         {
             int index = Dice.Weighted(package.Prob);
             if (index < package.Fixed.Count && data.Packages.Fixed.TryGetValue(package.Fixed[index], out FixedItem? won))
                 all.Add(won);
+            if (all.Count > 0 && index < package.Jackpot.Count && package.Jackpot[index] != 0
+                && data.Packages.Fixed.TryGetValue((uint)package.Jackpot[index], out FixedItem? ticket))
+            {
+                all.Add(ticket);
+                jackpot = true;
+            }
             return all;
         }
 
@@ -193,6 +243,7 @@ public sealed class InventoryHandler : IMessageHandler
 public sealed class CapsuleMachineHandler : IMessageHandler
 {
     private const byte Pull = 0;
+
     private const byte PayWithGold = 1;
 
     public MsgCategory Category => MsgCategory.cCapsuleMachine;
@@ -213,6 +264,13 @@ public sealed class CapsuleMachineHandler : IMessageHandler
         GameData data = GameData.Instance;
         int classIndex = Loadout.ClassIndex(session.Account.Character?.Class ?? 1);
 
+        if (session.IsItemRequestTooFast())
+        {
+            Log.Info(session.Tag, $"Capsule pull on machine {machineId} refused: sent too soon after the last request");
+            await session.SendAsync(CapsulePacket.Error(NetError.Inventory_FastRequest), cancellationToken);
+            return;
+        }
+
         if (!data.Capsules.Machines.TryGetValue(machineId, out List<CapsulePart>? parts)
             || part < 0 || part >= parts.Count
             || classIndex >= parts[part].Index.Count
@@ -220,7 +278,7 @@ public sealed class CapsuleMachineHandler : IMessageHandler
             || pool.Items.Count == 0)
         {
             Log.Warn(session.Tag, $"Capsule pull refused: machine {machineId}, part {part + 1}, class {classIndex + 1}");
-            await session.SendAsync(CapsulePacket.Refused(), cancellationToken);
+            await session.SendAsync(CapsulePacket.Error(NetError.Inventory_UseGashaponItem), cancellationToken);
             return;
         }
 
@@ -254,7 +312,8 @@ public sealed class CapsuleMachineHandler : IMessageHandler
         if (won is null)
         {
             Log.Info(session.Tag, $"Capsule pull refused: costs {price} {(withGold ? "BP" : "RT")}");
-            await session.SendAsync(CapsulePacket.Refused(), cancellationToken);
+            await session.SendAsync(CapsulePacket.Error(price <= 0 ? NetError.Inventory_UseGashaponItem
+                : withGold ? NetError.Store_NoGold : NetError.Store_NoCash), cancellationToken);
             return;
         }
 

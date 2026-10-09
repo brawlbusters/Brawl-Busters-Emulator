@@ -13,6 +13,7 @@ public static class InventoryActions
     private const byte OutcomeDestroy = 3;
 
     private const byte PayWithGold = 1;
+    private const byte PayWithCash = 2;
 
     public static async Task SellAsync(ClientSession session, ushort slot, CancellationToken cancellationToken)
     {
@@ -31,8 +32,8 @@ public static class InventoryActions
 
         if (paid < 0)
         {
-            Log.Warn(session.Tag, $"Sell slot {slot} refused: no such item or it has no resale price");
-            await session.SendAsync(InventoryPacket.Sold(false, slot), cancellationToken);
+            Log.Warn(session.Tag, $"Sell slot {slot} refused: no such item (already sold) or it has no resale price");
+            await session.SendAsync(InventoryPacket.Failed(NetError.AlreadyResaleItem), cancellationToken);
             return;
         }
 
@@ -41,25 +42,52 @@ public static class InventoryActions
         await SendBalanceAndItemsAsync(session, cancellationToken);
     }
 
-    public static async Task ReinforceAsync(ClientSession session, ushort itemSlot, ushort stoneSlot, CancellationToken cancellationToken)
+    public static async Task ReinforceAsync(ClientSession session, ushort itemSlot, ushort stoneSlot, CancellationToken cancellationToken,
+        bool keepLevel = false, bool keepItem = false)
     {
         GameData data = GameData.Instance;
         byte outcome = OutcomeMaintain;
         ushort level = 0;
         string? refusal = null;
+        NetError reason = NetError.Inventory_ReinforceItem;
+        int insurance = 0;
 
         session.Accounts.Update(session.Account.Id, account =>
         {
             InventoryItem? item = Find(account, itemSlot);
             InventoryItem? stone = Find(account, stoneSlot);
             UpgradeTable? table = TableFor(data, item, stone, ItemType.WeaponReinforce, ItemType.CostumeReinforce);
-            if (item is null || stone is null || table is null) { refusal = "that stone does not work on that item"; return; }
+            if (item is null || stone is null || table is null)
+            {
+                refusal = "that stone does not work on that item";
+                reason = NetError.Inventory_MismatchUpgradeItemType;
+                return;
+            }
+            if (!data.LevelAllows(stone.ItemId, account.DisplayLevel) || !data.LevelAllows(item.ItemId, account.DisplayLevel))
+            {
+                refusal = "the item or the stone needs a higher level";
+                reason = NetError.Inventory_UpgradeInactiveItem;
+                return;
+            }
 
             int index = table.Addon.IndexOf(item.Option(3));
             if (index < 0) index = 0;
             if (index >= table.Addon.Count - 1 || index >= table.Success.Count) { refusal = "already at the highest level"; return; }
 
+            // The two "prevent" buttons cost RT, priced per reinforce level in the catalog of the item.
+            data.Catalog.TryGetValue(item.ItemId, out CatalogEntry? priced);
+            if (keepLevel) insurance += At(priced?.InsureDecrease ?? [], index);
+            if (keepItem) insurance += At(priced?.InsureDestroy ?? [], index);
+            if (insurance > account.Cash)
+            {
+                refusal = $"the insurance costs {insurance} RT";
+                reason = NetError.Inventory_ReinforceNoCash;
+                return;
+            }
+            account.Cash -= insurance;
+
             int roll = Dice.Weighted([At(table.Success, index), At(table.Maintain, index), At(table.Decrease, index), At(table.Destroy, index)]);
+            if ((roll == 2 && keepLevel) || (roll == 3 && keepItem)) roll = 1;
             Consume(account, stone);
             switch (roll)
             {
@@ -87,8 +115,16 @@ public static class InventoryActions
         if (refusal is not null)
         {
             Log.Warn(session.Tag, $"Reinforce slot {itemSlot} with {stoneSlot} refused: {refusal}");
-            await session.SendAsync(InventoryPacket.Reinforced(false, 0, itemSlot, stoneSlot, 0), cancellationToken);
+            await session.SendAsync(reason == NetError.Inventory_ReinforceItem
+                ? InventoryPacket.Reinforced(false, 0, itemSlot, stoneSlot, 0)
+                : InventoryPacket.Failed(reason), cancellationToken);
             return;
+        }
+
+        if (insurance > 0)
+        {
+            Log.Info(session.Tag, $"Reinforce insurance: {insurance} RT ({(keepLevel ? "no level loss" : "")}{(keepLevel && keepItem ? ", " : "")}{(keepItem ? "no break" : "")})");
+            await session.SendAsync(UserInfoPacket.Cash((uint)session.Account.Cash), cancellationToken);
         }
 
         string[] names = ["went up", "stayed", "went down", "broke"];
@@ -127,6 +163,7 @@ public static class InventoryActions
         GameData data = GameData.Instance;
         uint expiry = 0;
         string? refusal = null;
+        NetError reason = NetError.Inventory_ExtendItem;
 
         session.Accounts.Update(session.Account.Id, account =>
         {
@@ -135,17 +172,32 @@ public static class InventoryActions
             if (item is null || !data.Catalog.TryGetValue(item.ItemId, out CatalogEntry? entry)
                 || index < 0 || index >= entry.Extend.Count || index >= entry.ExtendGold.Count)
             {
-                refusal = "this item cannot be extended that way";
+                refusal = "this item has no such extension";
+                reason = NetError.Inventory_ExtendPeriod_NotExist;
                 return;
             }
-            if (payment != PayWithGold) { refusal = "only BP is accepted"; return; }
+            if (!item.HasExpired && session.Settings.ExtendOnlyExpiredItems)
+            {
+                refusal = "the item has not expired yet";
+                reason = NetError.Inventory_NotExpiredItem;
+                return;
+            }
+            bool cash = payment == PayWithCash;
+            if (payment != PayWithGold && !cash) { refusal = $"payment {payment} is not known"; return; }
+            if (cash && index >= entry.ExtendCash.Count) { refusal = "this option is not sold for RT"; return; }
 
-            int price = entry.ExtendGold[index];
+            int price = cash ? entry.ExtendCash[index] : entry.ExtendGold[index];
             int seconds = entry.Extend[index];
-            if (price <= 0 && seconds >= 0) { refusal = "this option is not sold for BP"; return; }
-            if (account.Gold < price) { refusal = $"costs {price} BP"; return; }
+            if (price <= 0) { refusal = $"this option is not sold for {(cash ? "RT" : "BP")}"; return; }
+            if ((cash ? account.Cash : account.Gold) < price)
+            {
+                refusal = $"costs {price} {(cash ? "RT" : "BP")}";
+                reason = cash ? NetError.Store_NoCash : NetError.Store_NoGold;
+                return;
+            }
 
-            account.Gold -= price;
+            if (cash) account.Cash -= price;
+            else account.Gold -= price;
             uint now = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             item.Expiry = seconds < 0 || item.Expiry == uint.MaxValue
                 ? uint.MaxValue
@@ -157,12 +209,15 @@ public static class InventoryActions
         if (refusal is not null)
         {
             Log.Warn(session.Tag, $"Extend slot {slot} refused: {refusal}");
-            await session.SendAsync(InventoryPacket.Extended(false, slot, option, 0), cancellationToken);
+            await session.SendAsync(reason == NetError.Inventory_ExtendItem
+                ? InventoryPacket.Extended(false, slot, option, 0)
+                : InventoryPacket.Failed(reason), cancellationToken);
             return;
         }
 
         Log.Info(session.Tag, $"Extended the item in slot {slot} (option {option})");
         await session.SendAsync(InventoryPacket.Extended(true, slot, option, expiry), cancellationToken);
+        if (payment == PayWithCash) await session.SendAsync(UserInfoPacket.Cash((uint)session.Account.Cash), cancellationToken);
         await SendBalanceAndItemsAsync(session, cancellationToken);
     }
 
@@ -201,11 +256,107 @@ public static class InventoryActions
         await session.SendAsync(InventoryPacket.List(session.Account.Items), cancellationToken);
     }
 
-    public static async Task UseAsync(ClientSession session, ushort slot, CancellationToken cancellationToken)
+    private static readonly int[] JackpotGold = [10_000, 100_000, 500_000];
+    private static readonly int[] JackpotGoldWeights = [60, 30, 10];
+    private const int JackpotItemChance = 15;
+    private const int JackpotMinPlus = 8;
+    private const int JackpotMaxPlus = 10;
+    private const int WeaponBaseLevel = 10;
+    private const int ArmourBaseLevel = 30;
+
+    private static async Task UseJackpotAsync(ClientSession session, ushort slot, CancellationToken cancellationToken)
     {
         GameData data = GameData.Instance;
         int gold = 0;
+        InventoryItem? prize = null;
+
+        session.Accounts.Update(session.Account.Id, account =>
+        {
+            InventoryItem? ticket = Find(account, slot);
+            if (ticket is null || ticket.Type != ItemType.JackpotTicket) return;
+
+            Consume(account, ticket);
+            if (Random.Shared.Next(100) < JackpotItemChance) prize = JackpotItem(data, account);
+            if (prize is not null)
+            {
+                account.Items.Add(prize);
+                return;
+            }
+
+            gold = JackpotGold[Dice.Weighted(JackpotGoldWeights)];
+            account.Gold = (int)Math.Min((long)account.Gold + gold, int.MaxValue);
+        });
+        session.RefreshAccount();
+
+        Log.Info(session.Tag, prize is not null
+            ? $"Jackpot ticket: item {prize.ItemId} at level value {prize.Option(3)}"
+            : $"Jackpot ticket: +{gold} BP");
+        await session.SendAsync(InventoryPacket.Used(NetError.Success), cancellationToken);
+        if (prize is not null) await session.SendAsync(InventoryPacket.Added([prize]), cancellationToken);
+        await SendBalanceAndItemsAsync(session, cancellationToken);
+        string won = prize is not null ? $"a +{prize.Option(3) - (prize.Type == ItemType.Weapon ? WeaponBaseLevel : ArmourBaseLevel)} item" : $"{gold:N0} BP";
+        await session.SendAsync(UserMsgPacket.SystemMessage($"Jackpot! You won {won}."), cancellationToken);
+    }
+
+    private static InventoryItem? JackpotItem(GameData data, Account account)
+    {
+        int classIndex = Loadout.ClassIndex(account.Character?.Class ?? 1);
+        List<uint> candidates = data.Capsules.Machines.Values
+            .SelectMany(parts => parts)
+            .Where(part => classIndex < part.Index.Count && data.Capsules.Items.ContainsKey(part.Index[classIndex]))
+            .SelectMany(part => data.Capsules.Items[part.Index[classIndex]].Items)
+            .Where(itemId => GameData.UpgradePart(data.TypeOf(itemId)) is not null)
+            .Distinct()
+            .ToList();
+        if (candidates.Count == 0) return null;
+
+        uint id = candidates[Random.Shared.Next(candidates.Count)];
+        byte type = data.TypeOf(id);
+        int level = (type == ItemType.Weapon ? WeaponBaseLevel : ArmourBaseLevel) + Random.Shared.Next(JackpotMinPlus, JackpotMaxPlus + 1);
+        return new InventoryItem
+        {
+            Slot = account.FreeSlot(),
+            ItemId = id,
+            Type = type,
+            Options = [0, 0, (ushort)level, 0],
+            Quantity = 1,
+        };
+    }
+
+    public static async Task UseAsync(ClientSession session, ushort slot, CancellationToken cancellationToken)
+    {
+        if (Find(session.Account, slot)?.Type == ItemType.JackpotTicket)
+        {
+            await UseJackpotAsync(session, slot, cancellationToken);
+            return;
+        }
+
+        GameData data = GameData.Instance;
+        int gold = 0;
         bool used = false;
+
+        // "Use" on something to wear is the click that activates an item whose level requirement is now met.
+        if (Find(session.Account, slot) is { } worn && Loadout.IsWearable(worn.Type))
+        {
+            bool allowed = data.LevelAllows(worn.ItemId, session.Account.DisplayLevel) && !worn.HasExpired;
+            if (allowed)
+            {
+                session.Accounts.Update(session.Account.Id, account =>
+                {
+                    if (Find(account, slot) is { } stored) stored.State = 1;
+                });
+                session.RefreshAccount();
+            }
+
+            Log.Info(session.Tag, allowed ? $"Item in slot {slot} activated" : $"Activation of slot {slot} refused: the item needs a higher level or has expired");
+            await session.SendAsync(InventoryPacket.Activated(allowed), cancellationToken);
+            if (allowed)
+            {
+                await session.SendAsync(NoticePacket.ItemActivated(slot), cancellationToken);
+                await SendBalanceAndItemsAsync(session, cancellationToken);
+            }
+            return;
+        }
 
         session.Accounts.Update(session.Account.Id, account =>
         {
@@ -223,7 +374,7 @@ public static class InventoryActions
         if (!used)
         {
             Log.Warn(session.Tag, $"Use slot {slot} refused: not an item the server knows how to use");
-            await session.SendAsync(InventoryPacket.Used(NetError.Unknown), cancellationToken);
+            await session.SendAsync(InventoryPacket.Used(NetError.Inventory_UseItem), cancellationToken);
             return;
         }
 

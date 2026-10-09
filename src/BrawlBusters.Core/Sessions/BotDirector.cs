@@ -45,10 +45,20 @@ public sealed class BotDirector
     private readonly string _serverName;
 
     private readonly bool _joinPlayerRooms;
+    private readonly bool _openRooms;
+    private readonly bool _fillChannels;
+    private readonly int _capacity;
+    private readonly TimeSpan _fillTime;
+    private readonly DateTime _startedUtc = DateTime.UtcNow;
+    private readonly Dictionary<ushort, ChannelStatus> _lastStatus = [];
 
     private BotDirector(string serverName, BotSettings settings, ushort[] channels)
     {
         _joinPlayerRooms = settings.JoinPlayerRooms;
+        _openRooms = settings.OpenRooms;
+        _fillChannels = settings.FillChannels;
+        _capacity = Math.Max(1, settings.ChannelCapacity);
+        _fillTime = TimeSpan.FromSeconds(Math.Max(1, settings.FillSeconds));
         _serverName = serverName;
         _channels = channels;
         for (int i = 0; i < settings.Count; i++)
@@ -67,13 +77,15 @@ public sealed class BotDirector
 
     public static Task RunAsync(string serverName, EmulatorSettings settings, CancellationToken cancellationToken)
     {
-        ushort[] channels = settings.Channels.Select(channel => channel.Id).ToArray();
+        ushort[] channels = ChannelDirectory.Channels.Where(channel => !channel.StaffOnly).Select(channel => channel.Id).ToArray();
         if (!settings.Bots.Enabled || settings.Bots.Count <= 0 || channels.Length == 0 || GameData.Instance.Maps.Count == 0)
             return Task.CompletedTask;
 
         var director = new BotDirector(serverName, settings.Bots, channels);
         _instance = director;
-        Log.Info(serverName, $"Bots: {settings.Bots.Count} bots across {channels.Length} channel(s)");
+        Log.Info(LogChannel.Bots, serverName, $"Bots: {settings.Bots.Count} bots across {channels.Length} channel(s)"
+            + (settings.Bots.OpenRooms ? "" : ", not opening rooms")
+            + (settings.Bots.FillChannels ? $"; each channel fills to {director._capacity} players in {settings.Bots.FillSeconds} s, one after the other" : ""));
         return director.LoopAsync(cancellationToken);
     }
 
@@ -120,11 +132,65 @@ public sealed class BotDirector
         }
     }
 
+    public static List<(uint Id, string Name, byte CharacterClass, byte Level)> Roster()
+    {
+        BotDirector? director = _instance;
+        if (director is null) return [];
+        lock (director._gate) return director._bots.Select(bot => (bot.Id, bot.Name, bot.CharacterClass, bot.Level)).ToList();
+    }
+
     public static int InLobby(ushort channelId)
     {
         BotDirector? director = _instance;
         if (director is null) return 0;
+        if (director._fillChannels) return director.Crowd(channelId, DateTime.UtcNow);
         lock (director._gate) return director._bots.Count(bot => bot.Room is null && bot.GuestOf is null && bot.Channel == channelId);
+    }
+
+    public static ChannelStatus StatusOf(ushort channelId, int realPlayers)
+    {
+        BotDirector? director = _instance;
+        if (director is null || !director._fillChannels) return ChannelStatus.Low;
+        return director.StatusFor(director.Crowd(channelId, DateTime.UtcNow) + realPlayers);
+    }
+
+    private int Crowd(ushort channelId, DateTime now)
+    {
+        int index = Array.IndexOf(_channels, channelId);
+        if (index < 0) return 0;
+
+        double share = (now - _startedUtc - index * _fillTime) / _fillTime;
+        return (int)Math.Round(_capacity * Math.Clamp(share, 0, 1));
+    }
+
+    private ChannelStatus StatusFor(int players)
+    {
+        double share = (double)players / _capacity;
+        return share >= 1 ? ChannelStatus.Max
+            : share >= 0.75 ? ChannelStatus.SemiMax
+            : share >= 0.5 ? ChannelStatus.High
+            : share >= 0.25 ? ChannelStatus.Medium
+            : ChannelStatus.Low;
+    }
+
+    private void ReportCrowd(DateTime now)
+    {
+        if (!_fillChannels) return;
+
+        bool changed = false;
+        foreach (ushort channel in _channels)
+        {
+            int players = Crowd(channel, now);
+            ChannelStatus status = StatusFor(players);
+            if (_lastStatus.TryGetValue(channel, out ChannelStatus before) && before == status) continue;
+
+            _lastStatus[channel] = status;
+            string text = GameData.Instance.Channels.TryGetValue(channel, out ChannelData? known) ? $" ({known.Text})" : "";
+            Log.Info(LogChannel.Bots, _serverName, $"Channel {channel}{text}: {players}/{_capacity} players - status {status}");
+            changed = true;
+        }
+
+        if (changed) _ = GameFlow.PushChannelStatesAsync();
     }
 
     private async Task LoopAsync(CancellationToken cancellationToken)
@@ -134,14 +200,19 @@ public sealed class BotDirector
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                lock (_gate)
+                await World.RunAsync(() =>
                 {
-                    DateTime now = DateTime.UtcNow;
-                    foreach (BotRoom room in _rooms.ToList()) Advance(room, now);
-                    ReleaseGuestsOfClosedRooms(now);
-                    FillPlayerRooms(now);
-                    foreach (Bot bot in _bots.Where(bot => bot.Room is null && bot.GuestOf is null && bot.BusyUntil <= now).ToList()) Act(bot, now);
-                }
+                    lock (_gate)
+                    {
+                        DateTime now = DateTime.UtcNow;
+                        ReportCrowd(now);
+                        foreach (BotRoom room in _rooms.ToList()) Advance(room, now);
+                        ReleaseGuestsOfClosedRooms(now);
+                        FillPlayerRooms(now);
+                        foreach (Bot bot in _bots.Where(bot => bot.Room is null && bot.GuestOf is null && bot.BusyUntil <= now).ToList()) Act(bot, now);
+                    }
+                    return Task.CompletedTask;
+                });
             }
         }
         catch (OperationCanceledException)
@@ -151,6 +222,12 @@ public sealed class BotDirector
 
     private void Act(Bot bot, DateTime now)
     {
+        if (!_openRooms)
+        {
+            bot.BusyUntil = now + Seconds(30, 60);
+            return;
+        }
+
         int roll = _random.Next(100);
         if (roll < 55)
         {
@@ -179,6 +256,7 @@ public sealed class BotDirector
 
         List<Room> rooms = RoomRegistry.Instance.All()
             .Where(candidate => !candidate.IsBotRoom
+                && !candidate.IsLadder
                 && now - candidate.CreatedUtc > PlayerRoomGrace
                 && candidate.State == RoomPacket.StateOf(RoomPhase.Created)
                 && candidate.PlayerCount < candidate.MaxPlayers)
@@ -198,7 +276,7 @@ public sealed class BotDirector
 
             bot.Channel = room.ChannelId;
             bot.GuestOf = room;
-            Log.Info(_serverName, $"Bot {bot.Name} joined room {room.Id} ({room.PlayerCount}/{room.MaxPlayers})");
+            Log.Info(LogChannel.Bots, _serverName, $"Bot {bot.Name} joined room {room.Id} ({room.PlayerCount}/{room.MaxPlayers})");
             _ = GameFlow.BotJoinedAsync(room, seated);
         }
     }
@@ -242,7 +320,7 @@ public sealed class BotDirector
         GameData data = GameData.Instance;
 
         var choices = RoomModes
-            .Select(mode => (Mode: mode, Maps: data.MapsOf(mode).Where(map => map.Channels.Count == 0 || map.Channels.Contains(bot.Channel)).ToList()))
+            .Select(mode => (Mode: mode, Maps: data.MapsOf(mode).Where(map => map.Channels.Count == 0 || map.Channels.Contains(data.ChannelType(bot.Channel))).ToList()))
             .Where(choice => choice.Maps.Count > 0)
             .ToList();
         if (choices.Count == 0) return;
@@ -266,7 +344,7 @@ public sealed class BotDirector
         };
         _rooms.Add(botRoom);
         Join(bot, botRoom);
-        Log.Info(_serverName, $"Bot {bot.Name} opened room {room.Id} in channel {room.ChannelId}: {mode}, map {map.Id} ({map.Name}), rule {rule}, max {maxPlayers}");
+        Log.Info(LogChannel.Bots, _serverName, $"Bot {bot.Name} opened room {room.Id} in channel {room.ChannelId}: {mode}, map {map.Id} ({map.Name}), rule {rule}, max {maxPlayers}");
     }
 
     private static void Join(Bot bot, BotRoom room)
@@ -294,7 +372,7 @@ public sealed class BotDirector
                 break;
             case RoomPhase.Loaded:
                 Enter(room, RoomPhase.Playing, now + Seconds(60, 240));
-                Log.Info(_serverName, $"Bot room {room.Room.Id}: match started with {room.Members.Count} bot(s) on map {room.Map.Id}");
+                Log.Info(LogChannel.Bots, _serverName, $"Bot room {room.Room.Id}: match started with {room.Members.Count} bot(s) on map {room.Map.Id}");
                 break;
             default:
                 Close(room, now);
