@@ -260,6 +260,18 @@ public sealed class MissionInfo
     [JsonPropertyName("class")]
     public int Class { get; set; }
 
+    /// <summary>1 easy, 2 normal, 3 hard - the DIFFICULTY of the rule played; 0 = any.</summary>
+    [JsonPropertyName("difficulty")]
+    public int Difficulty { get; set; }
+
+    /// <summary>Class of the player to kill, 1-5; 0 = any.</summary>
+    [JsonPropertyName("target")]
+    public int Target { get; set; }
+
+    /// <summary>How to kill: 2 + the kill cause of the host's statistics (4 bomb, 7 hand bomb, 8 poison); 0 = any.</summary>
+    [JsonPropertyName("method")]
+    public int Method { get; set; }
+
     [JsonPropertyName("count")]
     public int Count { get; set; }
 

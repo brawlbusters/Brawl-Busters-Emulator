@@ -50,24 +50,28 @@ public static partial class GameFlow
         return Task.CompletedTask;
     }
 
-    public static Task MatchResultsAsync(ClientSession session, Room room, byte[] report, CancellationToken cancellationToken)
+    public static async Task MatchResultsAsync(ClientSession session, Room room, byte[] report, CancellationToken cancellationToken)
     {
-        if (!room.IsHost(session)) return Task.CompletedTask;
+        if (!room.IsHost(session)) return;
 
         List<PlayerStatistics>? statistics = HostStatistics.Parse(report);
         if (statistics is null)
         {
             Log.Warn(session.Tag, $"Room {room.Id}: host statistics of {report.Length} byte(s) do not have the expected shape - not used: {Log.Hex(report)}");
-            return Task.CompletedTask;
+            return;
         }
+
+        GameData.Instance.Rules.TryGetValue(room.RuleId, out RuleInfo? ruleInfo);
 
         foreach (RoomMember member in room.Members.Where(member => !member.IsObserver))
         {
             PlayerStatistics? own = statistics.FirstOrDefault(player => player.UserId == member.Session.Account.Id);
             if (own is null) continue;
 
+            (bool Changed, List<uint> RewardIds, List<InventoryItem> Items) missions = (false, [], []);
             member.Session.Accounts.Update(member.Session.Account.Id, account =>
             {
+                missions = DailyMissions.Progress(account, new MissionFacts(room.Mode) { Difficulty = ruleInfo?.Difficulty ?? 0, Statistics = own });
                 RecordBook book = account.Records;
                 if (!book.HasHostStatistics)
                 {
@@ -97,9 +101,8 @@ public static partial class GameFlow
             });
             member.Session.RefreshAccount();
             Log.Info(member.Session.Tag, $"Match statistics: {own.Kills} kill(s), {own.Assists} assist(s), {own.Deaths} death(s), {own.MobKills} mob kill(s), {own.Revives} revive(s)");
+            await SendMissionProgressAsync(member.Session, missions, cancellationToken);
         }
-
-        return Task.CompletedTask;
     }
 
     public static async Task MatchClosedAsync(ClientSession session, CancellationToken cancellationToken)
@@ -490,7 +493,17 @@ public static partial class GameFlow
                 account.Level = data.LevelForExp(account.Experience, account.Level);
                 if (room.IsLadder) account.GemRank = LadderGrades.GradeOf(account.LadderPoints, LadderGrades.Table(player));
 
-                missions = DailyMissions.Progress(account, room.Mode, played: true, won: row.Outcome > 0, kills: summary.Formal ? row.Kills : 0);
+                missions = DailyMissions.Progress(account, new MissionFacts(room.Mode)
+                {
+                    Difficulty = ruleInfo?.Difficulty ?? 0,
+                    Played = true,
+                    Won = row.Outcome > 0,
+                    Kills = summary.Formal ? row.Kills : 0,
+                    Assists = summary.Formal ? row.Assists : 0,
+                    Slays = summary.Formal ? row.Slays : 0,
+                    Stars = summary.Formal ? summary.Stars : 0,
+                    Medals = summary.Formal ? row.Flags : ResultFlag.None,
+                });
                 levelItems = Rewards.GrantForLevels(account);
                 if (rewardId != 0) rewardItem = Rewards.Grant(account, rewardId);
             });

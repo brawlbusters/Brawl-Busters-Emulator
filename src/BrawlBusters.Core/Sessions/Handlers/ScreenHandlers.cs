@@ -107,6 +107,7 @@ public sealed class SinglePlayHandler : IMessageHandler
             case SinglePlayRequest.Exit:
                 return GameFlow.ExitSingleStageAsync(session, cancellationToken);
             case SinglePlayRequest.Loaded:
+                session.SingleStageStartedUtc = DateTime.UtcNow;
                 return Task.CompletedTask;
             default:
                 Log.Warn(session.Tag, $"cSinglePlay 0x{(byte)request:X2} (not implemented): {Log.Hex(reader.ReadToEnd())}");

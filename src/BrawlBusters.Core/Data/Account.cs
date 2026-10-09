@@ -258,6 +258,16 @@ public sealed class RecordBook
 
     public int[] ClassDeathsBy { get; set; } = new int[Classes];
 
+    /// <summary>Single play: per stage id, [0] times cleared, [1] seconds spent on the cleared runs (My Stats, "tr_SPPractice").</summary>
+    public Dictionary<ushort, int[]> SingleStages { get; set; } = [];
+
+    public void SingleStageCleared(ushort stage, int seconds)
+    {
+        if (!SingleStages.TryGetValue(stage, out int[]? record) || record.Length != 2) SingleStages[stage] = record = new int[2];
+        record[0]++;
+        record[1] += Math.Max(0, seconds);
+    }
+
     public int[] KillsByCause { get; set; } = new int[7];
 
     public int[] MobKillsByCause { get; set; } = new int[7];

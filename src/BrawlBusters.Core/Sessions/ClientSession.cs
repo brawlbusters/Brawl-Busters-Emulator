@@ -67,6 +67,9 @@ public abstract class ClientSession
 
     public bool SingleStageFinished { get; set; }
 
+    /// <summary>When the running single-play stage finished loading (cSinglePlay 07): the start of its clear time.</summary>
+    public DateTime SingleStageStartedUtc { get; set; }
+
     public string Tag => Account is null ? Connection.Tag : $"{Connection.Tag} {Account.LoginId}";
 
     protected abstract bool AcceptsLogin { get; }

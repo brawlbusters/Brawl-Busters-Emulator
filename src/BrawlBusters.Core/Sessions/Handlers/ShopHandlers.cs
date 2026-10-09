@@ -148,6 +148,7 @@ public sealed class RecordHandler : IMessageHandler
                 }
 
                 Log.Info(session.Tag, $"Records of '{player.Nickname}'");
+                await session.SendAsync(RecordsPacket.LevelsOfPlayer(player), cancellationToken);
                 await session.SendAsync(RecordsPacket.OfPlayer(player), cancellationToken);
                 await session.SendAsync(RecordsPacket.End(), cancellationToken);
                 return;

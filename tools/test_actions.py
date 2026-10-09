@@ -70,12 +70,12 @@ def main():
 
     c.send(bytes.fromhex("2f19") + ws("Zq%d" % (gold % 100000)))
     reply = c.recv()
-    ok &= check("nickname check, free name: 0C 01 (Success)", reply == bytes.fromhex("0b0c01"), reply.hex())
+    ok &= check("nickname check, free name: sInventory 06 01 (Success)", reply == bytes.fromhex("0b0601"), reply.hex())
     other = new_player_at_home()
     other.sock.close()
     c.send(bytes.fromhex("2f19") + ws(taken_nickname()))
     reply = c.recv()
-    ok &= check("nickname check, taken name: 0C 20 (Nick_AlreadyExist)", reply == bytes.fromhex("0b0c20"), reply.hex())
+    ok &= check("nickname check, taken name: sInventory 06 20 (Nick_AlreadyExist)", reply == bytes.fromhex("0b0620"), reply.hex())
 
     c.send(bytes.fromhex("3118"))
     for _ in range(2):

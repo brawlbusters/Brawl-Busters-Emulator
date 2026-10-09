@@ -69,7 +69,8 @@ public static class InventoryPacket
         return ok ? writer.WriteUInt16(slot).WriteByte(option).WriteUInt32(expiry) : writer;
     }
 
-    public static PacketWriter NicknameChecked(NetError result) => new PacketWriter(MsgCategory.sInventory, 0x0C).WriteByte((byte)result);
+    /// <summary>sInventory 06 `u8 code`: raises event 30514, which the rename window shows through CheckNicknameResult(code == 1, text of the code) (client 0x5EC364, 0x70028B).</summary>
+    public static PacketWriter NicknameChecked(NetError result) => new PacketWriter(MsgCategory.sInventory, 0x06).WriteByte((byte)result);
 
     public static PacketWriter PackageOpened(bool success)
         => new PacketWriter(MsgCategory.sInventory, 3).WriteBool(success);
@@ -161,6 +162,11 @@ public static class RecordsPacket
     private const int ClassAssistsOffset = 0x14;
     private const int ClassSlaysOffset = 0x18;
     private const int ClassRevivesOffset = 0x1C;
+    private const int KillsOfClassOffset = 0xA0;
+    private const int UserCausesOffset = 0xB4;
+    private const int MobCausesOffset = 0xD4;
+    private const int DeathsByClassOffset = 0xF0;
+    private const int KillCauses = 7;
     private const int WinsOffset = 4;
     private const int PerfectWinsOffset = 8;
     private const int LossesOffset = 10;
@@ -253,6 +259,20 @@ public static class RecordsPacket
             Put(at + ClassRevivesOffset, book.ClassRevives.ElementAtOrDefault(index));
         }
 
+        // "Match-up" page (client 0x7AF352): after the five class blocks come the kills of each enemy class, the
+        // kills by cause (critical, invincible, bomb, flame, traffic, hand bomb, poison) against players and against
+        // zombies, and the deaths by each enemy class. The "weapons" column is the client's own kills minus these.
+        for (int index = 0; index < RecordBook.Classes; index++)
+        {
+            Put(CommonPart + KillsOfClassOffset + index * sizeof(int), book.ClassKillsOf.ElementAtOrDefault(index));
+            Put(CommonPart + DeathsByClassOffset + index * sizeof(int), book.ClassDeathsBy.ElementAtOrDefault(index));
+        }
+        for (int cause = 0; cause < KillCauses; cause++)
+        {
+            Put(CommonPart + UserCausesOffset + cause * sizeof(int), book.KillsByCause.ElementAtOrDefault(cause));
+            Put(CommonPart + MobCausesOffset + cause * sizeof(int), book.MobKillsByCause.ElementAtOrDefault(cause));
+        }
+
         ModeRecord tdm = book.ModeOf("tdm"), jes = book.ModeOf("jes"), suv = book.ModeOf("suv"), ffa = book.ModeOf("ffa"), bsr = book.ModeOf("bsr");
         PutTeamPart(TdmPart, tdm, 3, TdmTitlesOffset, TdmTitleBits, TdmMarginsOffset, MatchMode.TeamDeathmatch, MatchMode.Channel5Team);
         PutTeamPart(JesPart, jes, 4, JesTitlesOffset, JesTitleBits, JesMarginsOffset, MatchMode.Jessium);
@@ -302,13 +322,40 @@ public static class RecordsPacket
         ShortAt(best, BestBsr, bsr.Best[0]);
         best[BestBsr + 2] = Small(bsr.Best[1]);
         best[BestBsr + 3] = Small(bsr.Best[2]);
-        sheet.WriteBytes(best).WriteUInt16(0);
+        sheet.WriteBytes(best);
+
+        // Ninth part (client 0x857230, shown by 0x7B0702 as tr_SPPractice<stage>_Clear / _AVGTime): a slot list -
+        // `u16 slots, bitset`, then per slot `u16 stage, i16 clears, i16 seconds of those clears` (the client divides).
+        // A stage cleared before the clears were counted is listed with one clear and no time.
+        List<KeyValuePair<ushort, int[]>> stages = book.SingleStages.Where(stage => stage.Value is { Length: 2 } && stage.Value[0] > 0)
+            .Concat(account.ClearedStages().Where(stage => !book.SingleStages.ContainsKey(stage))
+                .Select(stage => new KeyValuePair<ushort, int[]>(stage, [1, 0])))
+            .OrderBy(stage => stage.Key).ToList();
+        sheet.WriteUInt16((ushort)stages.Count);
+        byte[] slots = new byte[(stages.Count + 7) / 8];
+        for (int i = 0; i < stages.Count; i++) slots[i / 8] |= (byte)(1 << (i % 8));
+        sheet.WriteBytes(slots);
+        foreach ((ushort stage, int[] record) in stages)
+        {
+            // Both are signed 16-bit: keep the average right when the total time no longer fits.
+            int clears = Math.Min(record[0], short.MaxValue);
+            int average = record[1] / record[0];
+            int seconds = (int)Math.Min((long)average * clears, short.MaxValue);
+            sheet.WriteUInt16(stage).WriteUInt16((ushort)clears).WriteUInt16((ushort)seconds);
+        }
         return sheet.ToArray();
     }
 
     public static PacketWriter End() => Result(NetError.Success);
 
     public static PacketWriter Result(NetError result) => new PacketWriter(MsgCategory.sUserRecords, 0x0C).WriteByte((byte)result);
+
+    /// <summary>
+    /// sUserRecords 0D `u8 level, u8 ladder level`: the client keeps the two bytes (0x600F32) and files them with the
+    /// next sheet of another player (0B, 0x600DAD) - without it that player is shown with level 0.
+    /// </summary>
+    public static PacketWriter LevelsOfPlayer(Account account)
+        => new PacketWriter(MsgCategory.sUserRecords, 0x0D).WriteByte(account.DisplayLevel).WriteByte(account.GemRank);
 
     public static PacketWriter OfPlayer(Account account)
         => new PacketWriter(MsgCategory.sUserRecords, 0x0B).WriteWideString(account.Nickname).WriteBytes(Sheet(account));

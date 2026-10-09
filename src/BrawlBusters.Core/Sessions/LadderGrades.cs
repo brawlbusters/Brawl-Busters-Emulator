@@ -48,9 +48,10 @@ public static class LadderGrades
         bool byPopulation = minPlayers > 0 && sortedScores.Count >= minPlayers;
         for (int rank = 1; rank < Boundaries; rank++)
         {
-            int score = byPopulation
-                ? sortedScores[Math.Min((int)(sortedScores.Count * ShareBelow[rank - 1]), sortedScores.Count - 1)]
-                : fixedScores.ElementAtOrDefault(rank - 1);
+            // The population can only raise a rank's score: many players near zero must not make every rank trivial.
+            int score = fixedScores.ElementAtOrDefault(rank - 1);
+            if (byPopulation)
+                score = Math.Max(score, sortedScores[Math.Min((int)(sortedScores.Count * ShareBelow[rank - 1]), sortedScores.Count - 1)]);
             table[rank] = (ushort)Math.Clamp(score, table[rank - 1] + 1, short.MaxValue - (Boundaries - rank));
         }
         return table;

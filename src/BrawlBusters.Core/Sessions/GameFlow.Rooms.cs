@@ -527,9 +527,11 @@ public static partial class GameFlow
             RoomRegistry.Instance.Remove(room.Id);
             LadderForget(room);
             bool ladder = room.IsLadder;
+            bool running = room.MatchStartedUtc is not null && !afterMatch;
             room.Clear();
             room.ClearBots();
             BotDirector.Release(room);
+            HashSet<RoomMember> inMatch = guests.Where(guest => guest.Session.InMatch).ToHashSet();
             foreach (RoomMember guest in guests)
             {
                 guest.Session.Room = null;
@@ -537,6 +539,8 @@ public static partial class GameFlow
                 Log.Info(guest.Session.Tag, $"Room {room.Id} closed by its host - back to the lobby");
                 try
                 {
+                    if (running && inMatch.Contains(guest) && !guest.InResult)
+                        await guest.Session.SendAsync(RoomPacket.GameCanceled(), CancellationToken.None);
                     await guest.Session.SendAsync(NoticePacket.RoomDisappeared(room.Id), CancellationToken.None);
                     if (ladder) await EnterLadderAsync(guest.Session, CancellationToken.None);
                     else await SendLobbyReturnAsync(guest.Session, afterMatch, CancellationToken.None);

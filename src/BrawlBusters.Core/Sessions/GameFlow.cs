@@ -87,6 +87,7 @@ public static partial class GameFlow
 
         session.SingleStage = stage;
         session.SingleStageFinished = false;
+        session.SingleStageStartedUtc = DateTime.UtcNow;
         await session.SendAsync(SingleProgress(session), cancellationToken);
         await session.SendAsync(ModePacket.Build(GameMode.SingleGame), cancellationToken);
         await session.SendAsync(LobbyPacket.SinglePlayStart(stage), cancellationToken);
@@ -96,6 +97,7 @@ public static partial class GameFlow
     {
         Log.Info(session.Tag, $"Single play: retrying stage {session.SingleStage}");
         session.SingleStageFinished = false;
+        session.SingleStageStartedUtc = DateTime.UtcNow;
         return Task.CompletedTask;
     }
 
@@ -110,11 +112,13 @@ public static partial class GameFlow
 
         InventoryItem? rewardItem = null;
         bool firstClear = false;
+        int clearSeconds = (int)Math.Clamp((DateTime.UtcNow - session.SingleStageStartedUtc).TotalSeconds, 0, 3600);
         session.Accounts.Update(session.Account.Id, account =>
         {
             List<ushort> cleared = account.ClearedStages();
             firstClear = !cleared.Contains(stage);
             if (firstClear) cleared.Add(stage);
+            account.Records.SingleStageCleared(stage, clearSeconds);
             if (info is null) return;
 
             account.Experience += firstClear ? info.FirstExp : info.RepeatExp;

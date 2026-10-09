@@ -164,6 +164,12 @@ public static class RoomPacket
         => GameRecord(new PacketWriter(MsgCategory.sGame, 0), room, hostLocal, relay, playedMapId);
 
     /// <summary>
+    /// sGame 02, no body: only the in-match dispatcher reads it (client 0x5E3F80). It prints the system message
+    /// SM_GameCanceled and raises event 40031 for the match screen.
+    /// </summary>
+    public static PacketWriter GameCanceled() => new(MsgCategory.sGame, 2);
+
+    /// <summary>
     /// sObserver 00 (client 0x605870): the record of sGame 00 for a game master on the "GM observer" screen (sMode 13).
     /// That screen loads the match by itself and answers with cGame 08 when it is in.
     /// </summary>
