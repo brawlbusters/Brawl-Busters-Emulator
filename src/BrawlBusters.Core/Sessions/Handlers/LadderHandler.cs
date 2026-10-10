@@ -42,6 +42,19 @@ public static class LadderPacket
 {
     private const byte DataSub = 0x00;
     private const ushort MatchingField = 1 << 9;
+    private const byte StateSub = 0x02;
+
+    /// <summary>The "approximate time" box of the ranked screen (UI eLadderState): how busy the queue is.</summary>
+    public const byte StateLow = 1;
+    public const byte StateMedium = 2;
+    public const byte StateHigh = 3;
+
+    /// <summary>
+    /// sLadder 02 `u8 state` (client 0x59FFC0, read on every screen; 0 is ignored): event 30607 -> SetLadderState.
+    /// The UI keeps it in _root.g_eLadderState and shows "take some time" (1), the medium (2) or the short (3)
+    /// waiting text; until one arrives the box shows the placeholder text of the design ("Ladder State").
+    /// </summary>
+    public static PacketWriter State(byte state) => new PacketWriter(MsgCategory.sLadder, StateSub).WriteByte(state);
     private const int TableValues = 7;
     private const int RecordValues = 6;
 

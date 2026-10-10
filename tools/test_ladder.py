@@ -55,7 +55,7 @@ def main():
 
     b.send(bytes.fromhex("311e")); drain(b)
     a.send(bytes.fromhex("3403"))
-    ok &= check("start match alone: matchmaking flag on, nothing else", drain(a) == [MATCHING_ON])
+    ok &= check("start match alone: waiting state (sLadder 02) + matchmaking flag on", [r for r in drain(a) if r[:2] != b"\x11\x02"] == [MATCHING_ON])
     a.send(bytes.fromhex("3404"))
     ok &= check("cancel match: matchmaking flag off", MATCHING_OFF in drain(a))
 

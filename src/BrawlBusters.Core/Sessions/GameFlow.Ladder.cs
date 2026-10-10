@@ -23,6 +23,23 @@ public static partial class GameFlow
         foreach (RoomMember member in room.Members) LadderSearchChanged?.Invoke(member.Session.Account.Id);
     }
 
+    /// <summary>
+    /// How long a ranked search will probably take, from the players searching right now: nobody - long, fewer
+    /// than a match needs - medium, enough for a match - short. The original rule is unknown.
+    /// </summary>
+    public static byte LadderWaitState(ClientSession session)
+    {
+        int searching;
+        lock (LadderGate)
+        {
+            searching = LadderSolo.Count(other => other != session)
+                + LadderParties.Where(room => room != session.Room).Sum(room => room.Members.Count);
+        }
+
+        int needed = 2 * Math.Max(1, session.Settings.LadderTeamSize) - 1;
+        return searching == 0 ? LadderPacket.StateLow : searching < needed ? LadderPacket.StateMedium : LadderPacket.StateHigh;
+    }
+
     private static readonly List<ClientSession> LadderSolo = [];
     private static readonly List<Room> LadderParties = [];
 
@@ -62,6 +79,7 @@ public static partial class GameFlow
         }
 
         Log.Info(session.Tag, "Ladder: searching for a match");
+        await session.SendAsync(LadderPacket.State(LadderWaitState(session)), cancellationToken);
         await session.SendAsync(LadderPacket.Matching(true), cancellationToken);
         await LadderTryMatchAsync(cancellationToken);
     }
