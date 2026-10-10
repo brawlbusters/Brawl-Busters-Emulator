@@ -242,8 +242,12 @@ public sealed class AntiCheatSettings
     /// </summary>
     public string ClientCheck { get; set; } = "log";
 
-    /// <summary>The client archive whose tables are the allowed ones, relative to the emulator folder.</summary>
-    public string ClientDataFile { get; set; } = "../Data/xmandb.bus";
+    /// <summary>
+    /// The folder (or one file) with the client archives whose tables are the allowed ones, relative to the emulator
+    /// folder: every *.bus in it, and the digests listed in its digests.txt. When it does not exist, the client the
+    /// emulator sits in (../Data/xmandb.bus) is the allowed one.
+    /// </summary>
+    public string ClientDataFile { get; set; } = "data/client";
 
     /// <summary>More allowed table digests (64 hex digits each), for client versions other than ClientDataFile.</summary>
     public List<string> AllowedClientDigests { get; set; } = [];

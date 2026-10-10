@@ -32,17 +32,18 @@ The repository holds the emulator only; the game client is a separate download (
 | File | Comes from | Has to be |
 |---|---|---|
 | `LightFX.dll` | This repository, [`tools/client_check/`](../tools/client_check) | In the `bin` folder of every player's client. Add it to the client package you hand out, or players copy it in themselves |
-| `xmandb.bus` | The client download, `Data` folder | Readable by the server, so it knows which tables are the allowed ones |
+| `xmandb.bus` | The client download, `Data` folder | Known to the server, so it can tell which tables are the allowed ones |
 
-For the second one the default works when the emulator folder sits inside the client folder, next to `bin` and
-`Data`, as the README sets it up: the server then finds `../Data/xmandb.bus` by itself. A server on a machine
-without the client needs one of these:
+The server keeps what it allows in its own folder, [`data/client/`](../data/client):
 
-- copy the client's `xmandb.bus` to the server and set `AntiCheat.ClientDataFile` to its path, or
-- list its digest in `AntiCheat.AllowedClientDigests` (`python tools/client_digest.py <path>` prints it on any
-  machine that has the file).
+- `digests.txt` lists allowed digests, one per line. It is part of the repository and holds the digest of the
+  released client, so a fresh checkout verifies that client without any client file on the server.
+- Every `xmandb.bus` you put into that folder is allowed too (any file name ending in `.bus`). These files stay
+  on your machine; they are not committed.
 
-Without either, the start-up log says `No game tables to compare with` and no client can be verified.
+If the folder does not exist, the server falls back to the client the emulator sits in (`../Data/xmandb.bus`).
+With nothing to compare with, the start-up log says `No game tables to compare with` and no client can be
+verified.
 
 ## Modes
 
@@ -79,15 +80,16 @@ All under `AntiCheat` in the config.
 | Setting | Default | Meaning |
 |---|---|---|
 | `ClientCheck` | `log` | `off`, `log` or `require` |
-| `ClientDataFile` | `../Data/xmandb.bus` | The archive whose tables are the allowed ones, relative to the emulator folder |
-| `AllowedClientDigests` | empty | More allowed digests (64 hex digits each), for other client versions |
+| `ClientDataFile` | `data/client` | Folder (or one file) with the allowed versions, relative to the emulator folder: every `.bus` in it and the digests in its `digests.txt` |
+| `AllowedClientDigests` | empty | More allowed digests (64 hex digits each), in addition to `data/client/digests.txt` |
 | `ClientCheckMaxAgeSeconds` | `180` | How old the last proof may be at login |
 
 ## Reading the log
 
 | Line | Meaning |
 |---|---|
-| `[ClientCheck] Game tables of <path>: digest C805A1A4...` | At start: the file the server compares with |
+| `[ClientCheck] Game tables of <path>: digest C805A1A4...` | At start: an archive in `data/client` whose tables are allowed |
+| `[ClientCheck] Game tables allowed by digest C805A1A4...` | At start: a digest from `digests.txt` or the config |
 | `[ClientCheck] Mode 'require': ...` | At start: the active mode |
 | `[ClientCheck] <ip>: game tables verified` | That address went from unverified to verified |
 | `[ClientCheck] <ip>: the game tables of this client are MODIFIED (or of another version)` | The module answered, the tables are not an allowed version |
@@ -105,11 +107,12 @@ Look for the `Handshake refused` line of that login.
   older client. See [Updating client files](updating-client-files.md).
 
 **My own client is refused after I edited the file.**
-The server still holds the digest of the old file. Restart it.
+The server allows what is in `data/client`, not what your client folder holds. Copy the edited `xmandb.bus`
+there (or add its digest to `digests.txt`) and restart. See [Updating client files](updating-client-files.md).
 
 **Nobody is verified, and the start-up log says "No game tables to compare with".**
-`ClientDataFile` does not point at a file. Fix the path, or list the digest in `AllowedClientDigests`
-(`python tools/client_digest.py` prints it).
+`data/client` has neither a `.bus` file nor a `digests.txt` with a digest in it. Put one of them there
+(`python tools/client_digest.py <path>` prints a digest).
 
 ## Limits
 

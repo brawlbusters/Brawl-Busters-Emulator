@@ -1,0 +1,5 @@
+# Digests of the client table versions this server allows, one per line (see guides/client-check.md).
+# python tools/client_digest.py <path to xmandb.bus> prints one. Text after # is a comment.
+# An xmandb.bus placed in this folder is allowed as well and needs no line here.
+
+C805A1A446B505CE5CD8F1B23CB54D5E068C88051969920082845754D5086E79   # client rev.16319

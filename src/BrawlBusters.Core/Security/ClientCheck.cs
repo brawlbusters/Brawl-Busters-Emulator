@@ -48,6 +48,8 @@ public static class ClientCheck
     private static readonly byte[] Magic = "BBIC"u8.ToArray();
     private static readonly byte[] Salt = "BrawlBusters client check v1"u8.ToArray();
     private const string SkippedFile = "clientconfigdb";
+    private const string FallbackDataFile = "../Data/xmandb.bus";
+    private const string DigestListFile = "digests.txt";
 
     private static readonly ConcurrentDictionary<IPAddress, byte[]> Nonces = new();
     private static readonly ConcurrentDictionary<IPAddress, (DateTime At, bool Ok)> Results = new();
@@ -68,27 +70,46 @@ public static class ClientCheck
         Allowed.Clear();
         if (Mode == ModeOff) return;
 
+        // The allowed versions: every archive of the folder (or the one file) ClientDataFile names, the digests
+        // listed in its digests.txt, and those of the settings. Without that folder, the client the emulator
+        // sits in (../Data) is the allowed one.
         string path = Path.GetFullPath(Path.Combine(baseDirectory, settings.ClientDataFile));
-        if (File.Exists(path) && Digest(File.ReadAllBytes(path)) is { } own)
+        if (!Directory.Exists(path) && !File.Exists(path)) path = Path.GetFullPath(Path.Combine(baseDirectory, FallbackDataFile));
+
+        var listedDigests = new List<string>(settings.AllowedClientDigests);
+        foreach (string file in Directory.Exists(path) ? Directory.GetFiles(path, "*.bus") : File.Exists(path) ? [path] : [])
         {
+            if (Digest(File.ReadAllBytes(file)) is not { } own) continue;
             Allowed.Add(own);
-            Log.Info("ClientCheck", $"Game tables of {path}: digest {Convert.ToHexString(own)[..16]}...");
+            Log.Info("ClientCheck", $"Game tables of {file}: digest {Convert.ToHexString(own)[..16]}...");
         }
-        foreach (string listed in settings.AllowedClientDigests)
+        string digestList = Path.Combine(path, DigestListFile);
+        if (Directory.Exists(path) && File.Exists(digestList))
+        {
+            listedDigests.AddRange(File.ReadAllLines(digestList)
+                .Select(line => line.Split('#')[0].Trim())
+                .Where(line => line.Length > 0));
+        }
+
+        foreach (string listed in listedDigests)
         {
             try
             {
                 byte[] digest = Convert.FromHexString(listed.Trim());
-                if (digest.Length == HashLength) Allowed.Add(digest);
+                if (digest.Length == HashLength && !Allowed.Any(known => known.AsSpan().SequenceEqual(digest)))
+                {
+                    Allowed.Add(digest);
+                    Log.Info("ClientCheck", $"Game tables allowed by digest {listed.Trim()[..16]}...");
+                }
             }
             catch (FormatException)
             {
-                Log.Warn("ClientCheck", $"AllowedClientDigests: '{listed}' is not a digest (64 hex digits)");
+                Log.Warn("ClientCheck", $"'{listed}' is not a digest (64 hex digits)");
             }
         }
 
         if (Allowed.Count == 0)
-            Log.Warn("ClientCheck", $"No game tables to compare with ({path} not found, AllowedClientDigests empty) - no client can be verified");
+            Log.Warn("ClientCheck", $"No game tables to compare with (nothing in {path}, AllowedClientDigests empty) - no client can be verified");
         Log.Info("ClientCheck", $"Mode '{Mode}': " + Mode switch
         {
             ModeRequire => "a login without a verified client is refused",
