@@ -2,6 +2,8 @@ using BrawlBusters.Core.Data;
 using BrawlBusters.Core.Logging;
 using BrawlBusters.Core.Network;
 using BrawlBusters.Core.Protocol;
+using BrawlBusters.Core.Protocol.Packets;
+using BrawlBusters.Core.Sessions;
 
 namespace BrawlBusters.Core.Chat;
 
@@ -43,6 +45,8 @@ public sealed class BuddyService
     private const byte StateReady = 6;
     private const byte StateInRoom = 7;
     private const byte StateInSinglePlay = 8;
+    private const byte StateInLadderRoom = 9;
+    private const byte StateInLadderRoomFindMatching = 10;
 
     private const byte PresenceInGame = 0x2B;
     private const byte PresenceSingleStart = 0x31;
@@ -297,7 +301,12 @@ public sealed class BuddyService
         if (online is null) return StateOffline;
         if (online.Presence == PresenceInGame) return StateInGame;
         if (online.Presence == PresenceSingleStart) return StateInSinglePlay;
-        return online.GameRoom is null ? StateReady : StateInRoom;
+        if (online.GameRoom is not { } place) return StateReady;
+
+        // The friend list has its own two states for a ranked room (UI eBuddyState_InLadderRoom, .._FindMatching).
+        Room? room = RoomRegistry.Instance.Find(place.Room);
+        if (room is not { IsLadder: true }) return StateInRoom;
+        return room.State == RoomPacket.StateMatching ? StateInLadderRoomFindMatching : StateInLadderRoom;
     }
 
     private Task SendRequestsAsync(ChatSession session, List<BuddyEntry> requests, CancellationToken cancellationToken)

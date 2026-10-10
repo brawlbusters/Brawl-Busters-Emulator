@@ -41,7 +41,7 @@ public sealed class LadderHandler : IMessageHandler
 public static class LadderPacket
 {
     private const byte DataSub = 0x00;
-    private const byte MatchingSub = 0x02;
+    private const ushort MatchingField = 1 << 9;
     private const int TableValues = 7;
     private const int RecordValues = 6;
 
@@ -65,6 +65,12 @@ public static class LadderPacket
             .WriteUInt32((uint)account.LadderPoints);
     }
 
+    /// <summary>
+    /// Matchmaking on/off. The client's sLadder handler (0x603AA0) knows 00 and 01 only; the state is the last byte
+    /// of the player's own record (part two, field bit 9, user +0x656), sent as a partial update (reader 0x582CC0).
+    /// Applying it raises event 30606 -> PbLadderSetMatchMakingState: the timer and the CANCEL button. While the
+    /// byte is clear the client answers a click on CANCEL locally and never sends cLadder 04.
+    /// </summary>
     public static PacketWriter Matching(bool searching)
-        => new PacketWriter(MsgCategory.sLadder, MatchingSub).WriteByte((byte)(searching ? 1 : 0));
+        => new PacketWriter(MsgCategory.sUserInfo, 1).WriteZeros(8).WriteUInt16(MatchingField).WriteByte((byte)(searching ? 1 : 0));
 }

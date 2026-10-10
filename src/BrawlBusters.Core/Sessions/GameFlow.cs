@@ -207,7 +207,10 @@ public static partial class GameFlow
 
     public static async Task EnterLadderAsync(ClientSession session, CancellationToken cancellationToken)
     {
-        LadderForget(session);
+        // Opening the screen ends a search that was still running; the client's own flag has to follow. It goes
+        // before the screen change and only when needed: the update makes the screen's script set properties of its
+        // buttons, and doing that while the opening animation plays leaves them where the animation was.
+        if (LadderForget(session)) await session.SendAsync(Handlers.LadderPacket.Matching(false), cancellationToken);
         await session.SendAsync(ModePacket.Build(GameMode.Ladder), cancellationToken);
         await session.SendAsync(Handlers.LadderPacket.Data(session.Account, SyncLadderGrade(session)), cancellationToken);
     }

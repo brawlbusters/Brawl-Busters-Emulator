@@ -9,6 +9,11 @@ import time
 from test_client import check
 from test_intrude import drain, has, player
 
+# sUserInfo 01, part-two field bit 9: the "matchmaking in progress" byte of the own record - what shows the
+# timer and the CANCEL button on the ranked screen.
+MATCHING_ON = b"\x09\x01" + bytes(8) + b"\x00\x02\x01"
+MATCHING_OFF = b"\x09\x01" + bytes(8) + b"\x00\x02\x00"
+
 
 def room_state(message, offset):
     title_end = offset + 2 + 2 * struct.unpack_from("<H", message, offset)[0]
@@ -38,21 +43,21 @@ def main():
     a.send(bytes.fromhex("3312"))
     finding = drain(a)
     update = next((reply for reply in finding if reply[:2] == b"\x10\x08"), b"")
-    ok &= check("find match: room state 6 (matching) + sLadder 02 01", bool(update) and room_state(update, 3) == 6 and has(finding, b"\x11\x02\x01"),
+    ok &= check("find match: room state 6 (matching) + matchmaking flag on", bool(update) and room_state(update, 3) == 6 and MATCHING_ON in finding,
                 str([r.hex()[:12] for r in finding]))
     a.send(bytes.fromhex("3313"))
     cancelled = drain(a)
     update = next((reply for reply in cancelled if reply[:2] == b"\x10\x08"), b"")
-    ok &= check("cancel find match: room state 0 + sLadder 02 00", bool(update) and room_state(update, 3) == 0 and has(cancelled, b"\x11\x02\x00"))
+    ok &= check("cancel find match: room state 0 + matchmaking flag off", bool(update) and room_state(update, 3) == 0 and MATCHING_OFF in cancelled)
 
     a.send(bytes.fromhex("3306"))
     ok &= check("exit ladder room: back on the ladder screen (sMode 0B)", has(drain(a), b"\x0e\x0b"))
 
     b.send(bytes.fromhex("311e")); drain(b)
     a.send(bytes.fromhex("3403"))
-    ok &= check("start match alone: sLadder 02 01, nothing else", [r[:3] for r in drain(a)] == [b"\x11\x02\x01"])
+    ok &= check("start match alone: matchmaking flag on, nothing else", drain(a) == [MATCHING_ON])
     a.send(bytes.fromhex("3404"))
-    ok &= check("cancel match: sLadder 02 00", has(drain(a), b"\x11\x02\x00"))
+    ok &= check("cancel match: matchmaking flag off", MATCHING_OFF in drain(a))
 
     a.send(bytes.fromhex("3403")); drain(a)
     b.send(bytes.fromhex("3403"))

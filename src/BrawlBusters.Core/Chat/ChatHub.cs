@@ -45,6 +45,7 @@ public sealed class ChatHub
     {
         _accounts = accounts;
         _buddies = new BuddyService(accounts, FindOnline, OnlineAmong);
+        GameFlow.LadderSearchChanged += userId => _ = _buddies.PresenceChangedAsync(userId, CancellationToken.None);
         _invites = new InviteService(FindOnline, FindOnlineByNickname);
     }
 

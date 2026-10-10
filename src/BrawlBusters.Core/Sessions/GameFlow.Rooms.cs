@@ -146,6 +146,19 @@ public static partial class GameFlow
         }
 
         var records = others.Select(other => (other.Session.Account.Id, RecordPart(other.Session))).ToList();
+        if (room.IsLadder)
+        {
+            // A ranked room is entered the way LadderCreateRoomAsync and the matchmaker do it: the screen change
+            // first (only the ranked waiting room reads sRoom), the others as "player joined" (see there).
+            await session.SendAsync(ModePacket.Build(WaitingMode(room)), cancellationToken);
+            await SendCanUnlockQuietlyAsync(session, cancellationToken);
+            await session.SendAsync(RoomPacket.Entered(room, Relay(session), Slots(room), []), cancellationToken);
+            foreach ((uint id, byte[] record) in records)
+                await session.SendAsync(RoomPacket.PlayerJoined(id, record), cancellationToken);
+            await session.SendAsync(RoomPacket.State(room, RoomPhase.Created, Relay(session), Slots(room)), cancellationToken);
+            return;
+        }
+
         records.AddRange(room.Bots.Select(bot => (bot.Id, BotRecordPart(bot))));
         await session.SendAsync(RoomPacket.Entered(room, Relay(session), Slots(room), records), cancellationToken);
         await session.SendAsync(RoomPacket.State(room, RoomPhase.Created, Relay(session), Slots(room)), cancellationToken);

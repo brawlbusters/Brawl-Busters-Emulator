@@ -15,6 +15,14 @@ public static partial class GameFlow
     private static readonly TimeSpan LadderRoomPause = TimeSpan.FromSeconds(2);
 
     private static readonly object LadderGate = new();
+    /// <summary>A ranked room started or stopped searching: the friend lists of its players show it (chat server).</summary>
+    public static event Action<uint>? LadderSearchChanged;
+
+    private static void LadderSearchChangedFor(Room room)
+    {
+        foreach (RoomMember member in room.Members) LadderSearchChanged?.Invoke(member.Session.Account.Id);
+    }
+
     private static readonly List<ClientSession> LadderSolo = [];
     private static readonly List<Room> LadderParties = [];
 
@@ -84,6 +92,7 @@ public static partial class GameFlow
         Log.Info(session.Tag, $"Ladder room {room.Id}: searching for a match with {room.Members.Count} player(s)");
         await BroadcastAsync(room, target => RoomPacket.StateOnly(room, Relay(target)), cancellationToken);
         await BroadcastAsync(room, _ => LadderPacket.Matching(true), cancellationToken);
+        LadderSearchChangedFor(room);
         await LadderTryMatchAsync(cancellationToken);
     }
 
@@ -104,13 +113,15 @@ public static partial class GameFlow
         Log.Info(session.Tag, $"Ladder room {room.Id}: search cancelled");
         await BroadcastAsync(room, target => RoomPacket.StateOnly(room, Relay(target)), cancellationToken);
         await BroadcastAsync(room, _ => LadderPacket.Matching(false), cancellationToken);
+        LadderSearchChangedFor(room);
     }
 
-    private static void LadderForget(ClientSession session)
+    /// <summary>Takes the player out of the solo queue; true when he was in it.</summary>
+    private static bool LadderForget(ClientSession session)
     {
         lock (LadderGate)
         {
-            LadderSolo.Remove(session);
+            return LadderSolo.Remove(session);
         }
     }
 
