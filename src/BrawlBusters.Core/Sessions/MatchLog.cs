@@ -114,6 +114,14 @@ public sealed class MatchLog
 
     public bool Finished { get; set; }
 
+    /// <summary>When the first player was in the match (server clock) - what every report is measured against.</summary>
+    public DateTime? StartedUtc { get; set; }
+
+    public DateTime? WaveClearedUtc { get; set; }
+
+    /// <summary>The host's end-of-match statistics are taken once per match.</summary>
+    public bool StatisticsApplied { get; set; }
+
     public DateTime? EndedUtc { get; set; }
 
     public PlayerLog Of(uint playerId)

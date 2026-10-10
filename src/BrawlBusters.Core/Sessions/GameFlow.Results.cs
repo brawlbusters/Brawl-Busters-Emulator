@@ -25,6 +25,26 @@ public static partial class GameFlow
     {
         if (!room.IsHost(session)) return;
 
+        // The host's word is all there is for what happened in a match, so it is at least held against the
+        // server's own clock and player list (MatchGuard).
+        MatchLog current = room.Log;
+        var reported = (HostEvent)code;
+        DateTime now = DateTime.UtcNow;
+        if (MatchGuard.Limits.Enabled && (current.StartedUtc is null || current.Finished))
+        {
+            Log.Warn(LogChannel.Match, session.Tag, $"Room {room.Id}: match event {reported} reported while no match is running - ignored");
+            return;
+        }
+        if (reported == HostEvent.Kill && body.Length >= 13
+            && !MatchGuard.KillAllowed(room, BitConverter.ToUInt32(body, 0), BitConverter.ToUInt32(body, 8), session.Tag))
+            return;
+        if (reported == HostEvent.WaveCleared && body.Length >= 2)
+        {
+            GameData.Instance.Rules.TryGetValue(room.RuleId, out RuleInfo? waveRule);
+            if (!MatchGuard.WaveAllowed(current, body[0], (sbyte)body[1], waveRule, now, session.Tag)) return;
+            current.WaveClearedUtc = now;
+        }
+
         string? what = room.Log.Apply((HostEvent)code, body);
         if (what is null) Log.Debug(session.Tag, $"Match event 0x{code:X2}: {Log.Hex(body)}");
         else Log.Info(session.Tag, $"Room {room.Id}: {what}");
@@ -52,6 +72,18 @@ public static partial class GameFlow
     {
         if (!room.IsHost(session)) return;
 
+        // These counters go into My Stats and the daily missions. They are taken once per match, and only for a
+        // match that really ran: a host could otherwise send them again and again from the waiting room.
+        MatchLog played = room.Log;
+        int playedSeconds = played.StartedUtc is { } startedAt ? (int)((played.EndedUtc ?? DateTime.UtcNow) - startedAt).TotalSeconds : 0;
+        if (MatchGuard.Limits.Enabled && (played.StatisticsApplied || playedSeconds < MatchGuard.Limits.MinSecondsForStatistics))
+        {
+            Log.Warn(LogChannel.Match, session.Tag, played.StatisticsApplied
+                ? $"Room {room.Id}: host statistics sent a second time for the same match - ignored"
+                : $"Room {room.Id}: host statistics for a match of {playedSeconds} s - too short, not used");
+            return;
+        }
+
         List<PlayerStatistics>? statistics = HostStatistics.Parse(report);
         if (statistics is null)
         {
@@ -60,11 +92,15 @@ public static partial class GameFlow
         }
 
         GameData.Instance.Rules.TryGetValue(room.RuleId, out RuleInfo? ruleInfo);
+        played.StatisticsApplied = true;
 
         foreach (RoomMember member in room.Members.Where(member => !member.IsObserver))
         {
             PlayerStatistics? own = statistics.FirstOrDefault(player => player.UserId == member.Session.Account.Id);
             if (own is null) continue;
+            // Only for somebody who was in this match, and only numbers its length allows.
+            if (MatchGuard.Limits.Enabled && played.Find(own.UserId) is null) continue;
+            if (!MatchGuard.Plausible(own, playedSeconds, session.Tag)) continue;
 
             (bool Changed, List<uint> RewardIds, List<InventoryItem> Items) missions = (false, [], []);
             member.Session.Accounts.Update(member.Session.Account.Id, account =>
@@ -215,11 +251,18 @@ public static partial class GameFlow
         bool stage = IsStageMode(room.Mode);
         bool formal = stage ? players.Count >= 1 : players.Count >= 2;
 
+        data.Results.Payouts.TryGetValue((byte)(room.IsLadder ? MatchMode.Channel5Team : room.Mode), out ModePayout? paid);
+        int paidSeconds = Math.Max(paid?.Exp?.TimeMax ?? 0, paid?.Gold?.TimeMax ?? 0);
+        string tag = $"Room {room.Id}";
+
         var rows = new List<ResultRow>();
         foreach (RoomMember member in players)
         {
             Account account = member.Session.Account;
             PlayerLog own = log.Of(account.Id);
+            var row = new ResultRow { UserId = account.Id };
+            // What the host reported, cut down to what the length of the match allows (MatchGuard).
+            MatchGuard.Check(row, own, seconds, paidSeconds, tag, out int kills, out int assists, out int slays, out int revives, out int attack);
             rows.Add(new ResultRow
             {
                 UserId = account.Id,
@@ -227,16 +270,16 @@ public static partial class GameFlow
                 Level = account.DisplayLevel,
                 LadderLevel = account.GemRank,
                 Team = member.Team,
-                Kills = own.Kills,
-                Assists = own.Assists,
+                Kills = kills,
+                Assists = assists,
                 Deaths = own.Deaths,
                 Revenges = own.Revenges,
-                Attack = own.AttackPercent,
+                Attack = attack,
                 MaxCombo = own.MaxCombo,
                 Items = own.Items,
                 Chargers = own.Chargers,
-                Slays = own.Slays,
-                Revives = own.Revives,
+                Slays = slays,
+                Revives = revives,
                 Jessium = own.Jessium,
                 JessiumExtra = own.JessiumExtra,
                 Points = own.Points,

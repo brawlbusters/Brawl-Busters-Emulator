@@ -41,6 +41,8 @@ public sealed class EmulatorSettings
 
     public BotSettings Bots { get; set; } = new();
 
+    public AntiCheatSettings AntiCheat { get; set; } = new();
+
     public Dictionary<string, string> Staff { get; set; } = [];
 
     public int ExpiredItemGraceDays { get; set; } = 7;
@@ -200,6 +202,54 @@ public sealed class DatabaseSettings
 
     [JsonIgnore]
     public bool UsesMariaDb => Provider.Equals(MariaDb, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// Limits for what a client reports about play the server cannot see (see MatchGuard). A report beyond them is
+/// logged on the Match channel as "Not plausible" and cut down or ignored; nobody is banned by it.
+/// </summary>
+public sealed class AntiCheatSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>A single play stage reported as won sooner than this after it loaded is not counted.</summary>
+    public int SinglePlayMinSeconds { get; set; } = 10;
+
+    /// <summary>A single play stage can only be started when the stage it requires has been cleared.</summary>
+    public bool SinglePlayRequirePrevious { get; set; } = true;
+
+    /// <summary>Kills (and assists) one player can make per minute of a match; 0 = no limit.</summary>
+    public int MaxKillsPerMinute { get; set; } = 10;
+
+    /// <summary>Zombies one player can slay per minute of a match; 0 = no limit.</summary>
+    public int MaxSlaysPerMinute { get; set; } = 150;
+
+    public int MaxRevivesPerMinute { get; set; } = 6;
+
+    /// <summary>Added to every per-minute limit, so that a short match is not judged too strictly.</summary>
+    public int Allowance { get; set; } = 5;
+
+    /// <summary>A survival wave reported as cleared sooner than this after the one before is ignored.</summary>
+    public int MinSecondsPerWave { get; set; } = 5;
+
+    /// <summary>The host's end-of-match statistics (My Stats, daily missions) are only used for a match at least this long.</summary>
+    public int MinSecondsForStatistics { get; set; } = 60;
+
+    /// <summary>
+    /// The check of the client's game tables (see ClientCheck; needs bin/LightFX.dll of tools/client_check on the
+    /// player's side): "off", "log" - a login without a verified client is written to the log - or "require" - it
+    /// is refused.
+    /// </summary>
+    public string ClientCheck { get; set; } = "log";
+
+    /// <summary>The client archive whose tables are the allowed ones, relative to the emulator folder.</summary>
+    public string ClientDataFile { get; set; } = "../Data/xmandb.bus";
+
+    /// <summary>More allowed table digests (64 hex digits each), for client versions other than ClientDataFile.</summary>
+    public List<string> AllowedClientDigests { get; set; } = [];
+
+    /// <summary>How old the last proof of a client may be at login. The module proves itself every minute.</summary>
+    public int ClientCheckMaxAgeSeconds { get; set; } = 180;
 }
 
 public sealed class BotSettings

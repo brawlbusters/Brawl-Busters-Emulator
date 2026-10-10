@@ -87,10 +87,30 @@ def ws(text):
 PUSHES = (bytes([0x05, 1]), bytes([0x0D, 1]), bytes([0x0D, 2]), bytes([0x0D, 3]), bytes([0x0F, 1]))
 
 
+_proven_at = 0.0
+
+
+def prove_client():
+    """With AntiCheat.ClientCheck "require" a login needs a fresh proof of unchanged game tables from this address
+    (what bin/LightFX.dll does for the game). The test clients give it the same way; see test_client_check.py."""
+    global _proven_at
+    import time
+    if time.time() - _proven_at < 60:
+        return
+    try:
+        from test_client_check import ARCHIVE, digest, prove
+        with open(ARCHIVE, "rb") as handle:
+            prove(digest(handle.read()))
+        _proven_at = time.time()
+    except (OSError, ImportError):
+        pass
+
+
 class Client:
     skip_pushes = True
 
     def __init__(self, port=None):
+        prove_client()
         self.sock = socket.create_connection((HOST, port or PORT), timeout=5)
         self.buffer = b""
         self.send_seq = 0

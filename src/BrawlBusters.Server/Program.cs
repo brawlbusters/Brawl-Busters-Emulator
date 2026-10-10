@@ -46,6 +46,8 @@ try
     await using AccountRepository accounts = await AccountRepository.OpenAsync(backend, shutdown.Token);
     ChannelDirectory.Configure(channels);
     BotDirector.ChannelCapacity = settings.Bots.ChannelCapacity;
+    MatchGuard.Limits = settings.AntiCheat;
+    BrawlBusters.Core.Security.ClientCheck.Configure(settings.AntiCheat, EmulatorSettings.RootDirectory);
     AuthorityNotifier.Attach(accounts);
     Log.Info(ServerName, $"Channels: {string.Join(", ", channels.Select(channel => channel.Id + (channel.StaffOnly ? " (staff)" : "")))}");
 

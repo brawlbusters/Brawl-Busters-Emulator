@@ -414,11 +414,18 @@ public static partial class GameFlow
     {
         RoomMember? member = room.FindUser(playerId);
         if (member is null || member.Session.InMatch) return;
+        // Only the host says who is in his match, and only once the room has started one.
+        if (MatchGuard.Limits.Enabled && (!room.IsHost(session) || room.State == RoomPacket.StateOf(RoomPhase.Created)))
+        {
+            Log.Warn(LogChannel.Match, session.Tag, $"Room {room.Id}: 'player {playerId} is in the match' reported by somebody who is not hosting a started match - ignored");
+            return;
+        }
 
         member.Session.InMatch = true;
         member.Intruding = false;
         member.Status = RoomPacket.StatusPlaying;
         room.MatchStartedUtc ??= DateTime.UtcNow;
+        room.Log.StartedUtc ??= room.MatchStartedUtc;
         room.Log.Of(playerId).LifeStartedUtc = DateTime.UtcNow;
         Log.Info(session.Tag, $"Room {room.Id}: player {playerId} is in the match");
 

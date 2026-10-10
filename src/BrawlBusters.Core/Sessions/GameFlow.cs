@@ -91,13 +91,33 @@ public static partial class GameFlow
             return;
         }
 
+        // The stages open one after the other (the "requires" column of the stage table). The client only offers
+        // the open ones; a request for another one does not come from its own menu.
+        ushort required = GameData.Instance.SingleStages[stage].Requires;
+        if (MatchGuard.Limits is { Enabled: true, SinglePlayRequirePrevious: true } && required != 0 && !SingleStageOpen(session.Account, required))
+        {
+            Log.Warn(LogChannel.Match, session.Tag, $"Not plausible: single play stage {stage} asked for before stage {required} was cleared - refused");
+            await session.SendAsync(LobbyPacket.SinglePlayError((byte)NetError.SinglePlay_InvalidID), cancellationToken);
+            return;
+        }
+
         session.SingleStage = stage;
         session.SingleStageFinished = false;
+        session.SingleStagePlaying = true;
         session.SingleStageStartedUtc = DateTime.UtcNow;
         await session.SendAsync(SingleProgress(session), cancellationToken);
         await session.SendAsync(ModePacket.Build(GameMode.SingleGame), cancellationToken);
         await session.SendAsync(LobbyPacket.SinglePlayStart(stage), cancellationToken);
     }
+
+    /// <summary>
+    /// Whether the stage another one requires counts as cleared. Stage 1 is the tutorial, which is not played as a
+    /// single play stage: it counts once the tutorial is done (players go from the tutorial straight to stage 2).
+    /// </summary>
+    private static bool SingleStageOpen(Account account, ushort required)
+        => account.ClearedStages().Contains(required) || (required == TutorialStage && account.TutorialDone);
+
+    private const ushort TutorialStage = 1;
 
     public static Task RetrySingleStageAsync(ClientSession session, CancellationToken cancellationToken)
     {
@@ -110,9 +130,20 @@ public static partial class GameFlow
     public static async Task FinishSingleStageAsync(ClientSession session, bool won, CancellationToken cancellationToken)
     {
         if (!won || session.SingleStageFinished) return;
+
+        // A stage runs on the player's own computer: "I won" is all the server gets. It is believed only for a
+        // stage that was started here and has been running for a while.
+        ushort stage = session.SingleStage;
+        double played = (DateTime.UtcNow - session.SingleStageStartedUtc).TotalSeconds;
+        if (MatchGuard.Limits.Enabled && (!session.SingleStagePlaying || played < MatchGuard.Limits.SinglePlayMinSeconds))
+        {
+            Log.Warn(LogChannel.Match, session.Tag, session.SingleStagePlaying
+                ? $"Not plausible: single play stage {stage} reported as won after {played:0.0} s - not counted"
+                : "Not plausible: a single play win reported without a stage having been started - not counted");
+            return;
+        }
         session.SingleStageFinished = true;
 
-        ushort stage = session.SingleStage;
         GameData data = GameData.Instance;
         data.SingleStages.TryGetValue(stage, out SingleStage? info);
 
@@ -157,6 +188,7 @@ public static partial class GameFlow
 
     public static async Task ExitSingleStageAsync(ClientSession session, CancellationToken cancellationToken)
     {
+        session.SingleStagePlaying = false;
         await session.SendAsync(UserInfoPacket.PartialEmpty(), cancellationToken);
         await session.SendAsync(SingleProgress(session), cancellationToken);
         await session.SendAsync(ModePacket.Build(GameMode.SingleLobby), cancellationToken);

@@ -132,6 +132,13 @@ public sealed class HolePunchServer
     private async Task HandleAsync(UdpClient socket, UdpReceiveResult datagram, CancellationToken cancellationToken)
     {
         byte[] packet = datagram.Buffer;
+        // The client check module talks on this port too ("BBIC" datagrams, see ClientCheck).
+        if (Security.ClientCheck.TryHandle(packet, datagram.RemoteEndPoint) is { } answer)
+        {
+            if (answer.Length > 0) await socket.SendAsync(answer, datagram.RemoteEndPoint, cancellationToken);
+            return;
+        }
+
         if (packet.Length < HeaderLength)
         {
             Log.Warn(_name, $"UDP RECV {datagram.RemoteEndPoint} too short: {Log.Hex(packet)}");

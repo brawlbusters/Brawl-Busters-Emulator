@@ -70,6 +70,9 @@ public abstract class ClientSession
 
     public bool SingleStageFinished { get; set; }
 
+    /// <summary>A stage was started and not left yet: only then can it be reported as won.</summary>
+    public bool SingleStagePlaying { get; set; }
+
     /// <summary>When the running single-play stage finished loading (cSinglePlay 07): the start of its clear time.</summary>
     public DateTime SingleStageStartedUtc { get; set; }
 
@@ -233,6 +236,19 @@ public abstract class ClientSession
         {
             uint seconds = (uint)Math.Clamp((account.BannedUntilUtc!.Value - DateTime.UtcNow).TotalSeconds, 1, uint.MaxValue);
             return await FailAsync(LoginReply.Failed(NetError.ID_ConnectionBlocked, seconds), $"banned until {account.BannedUntilUtc:u}", cancellationToken);
+        }
+
+        // The game tables of this client (ClientCheck): proven unchanged, proven changed, or nothing heard.
+        if (ClientCheck.Mode != ClientCheck.ModeOff)
+        {
+            ClientCheckResult check = ClientCheck.Of(Connection.RemoteEndPoint.Address);
+            if (check != ClientCheckResult.Verified)
+            {
+                string what = check == ClientCheckResult.Modified ? "MODIFIED game tables" : "no client check module (bin/LightFX.dll)";
+                if (ClientCheck.Mode == ClientCheck.ModeRequire)
+                    return await FailAsync(LoginReply.Failed(NetError.Login_ClientVersion), $"'{account.LoginId}': {what}", cancellationToken);
+                Log.Warn(Tag, $"Client check: '{account.LoginId}' logs in with {what}");
+            }
         }
 
         AccountGrade grade = account.Grade;

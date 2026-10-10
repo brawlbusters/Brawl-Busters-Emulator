@@ -14,6 +14,16 @@ The game client is not included in this repository.
 Game client download:
 http://www.mediafire.com/file/7c27acxte8gze7h/Brawl_busters_client.zip
 
+## Guides
+
+Task pages are in [`guides/`](guides/README.md):
+
+- [Client check](guides/client-check.md) - proving that a client's game tables are unchanged
+- [Updating client files](guides/updating-client-files.md) - changing `xmandb.bus` without players being flagged
+- [Reward limits](guides/reward-limits.md) - what the server refuses to believe from a client
+- [Server address and launchers](guides/server-address.md) - pointing a client at your server
+- [Commands](guides/commands.md) - the slash commands and how to add one
+
 ## Run
 
 1. `start-servers.bat` - starts the local MariaDB if there is one, builds the solution and starts the server.
