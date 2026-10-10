@@ -212,6 +212,19 @@ public sealed class Room
 
     public string Password { get; set; } = "";
 
+    public bool AutoBalance { get; set; }
+
+    /// <summary>Players may join while the match is running.</summary>
+    public bool AllowIntrusion { get; set; } = true;
+
+    public bool AllowObservation { get; set; } = true;
+
+    /// <summary>
+    /// The option byte of the room record, as the room list reads it (client 0x706085): bit 0 private (the lock
+    /// in the list; joining asks for the password), bit 1 auto balance, bit 2 intrusion allowed, bit 3 observers allowed.
+    /// </summary>
+    public byte Options => (byte)((Password.Length > 0 ? 1 : 0) | (AutoBalance ? 2 : 0) | (AllowIntrusion ? 4 : 0) | (AllowObservation ? 8 : 0));
+
     public const byte LadderSingle = 1;
     public const byte LadderMulti = 2;
 
@@ -231,6 +244,9 @@ public sealed class Room
     public MatchLog Log { get; set; } = new();
 
     public bool HostLoaded { get; set; }
+
+    /// <summary>A player left this ranked round: nobody wins or loses gem score for it and it pays like a normal match.</summary>
+    public bool LadderUnofficial { get; set; }
 
     public byte PlayerCount { get; set; } = 1;
     public byte MaxPlayers { get; init; } = 6;

@@ -92,7 +92,8 @@ def main():
     for index in range(section_count):
         entry = table + index * 40
         if data[entry:entry + 5] == b".text":
-            if struct.unpack_from("<I", data, entry + 8)[0] != TEXT_VIRTUAL_SIZE_FIELD_VALUE:
+            # already raised when another client patch (tools/patch_client_ranked_loading.py) was applied first
+            if struct.unpack_from("<I", data, entry + 8)[0] not in (TEXT_VIRTUAL_SIZE_FIELD_VALUE, TEXT_RAW_SIZE):
                 print("Unexpected .text size - nothing written.")
                 return 1
             struct.pack_into("<I", data, entry + 8, TEXT_RAW_SIZE)

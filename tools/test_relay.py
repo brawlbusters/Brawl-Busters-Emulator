@@ -41,9 +41,9 @@ def main():
 
     header = b"\x58" + struct.pack("<I", a_id) + b"\x0d" + struct.pack("<I", b_id)
     a.sendto(header + b"hello host", RELAY)
-    ok &= check("A -> relay: B receives the datagram unchanged", receive(b) == header + b"hello host")
+    ok &= check("A -> relay: B receives what was wrapped, without the relay header", receive(b) == b"hello host")
     b.sendto(header + b"hello guest", RELAY)
-    ok &= check("B -> relay with the same header: A receives it", receive(a) == header + b"hello guest")
+    ok &= check("B -> relay with the same header: A receives what was wrapped", receive(a) == b"hello guest")
     ok &= check("nothing is echoed back to the sender", receive(b, 0.3) == b"")
 
     c.sendto(header + b"intruder", RELAY)

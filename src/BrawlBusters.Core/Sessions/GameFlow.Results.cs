@@ -12,8 +12,6 @@ public static partial class GameFlow
     private const byte GameResult = 0x03;
     private const byte GameResultObserver = 0x04;
 
-    private const int LadderWinPoints = 20;
-    private const int LadderLossPoints = 10;
 
     private const int StarsFast = 4;
     private const double StarFastShare = 50;
@@ -71,7 +69,7 @@ public static partial class GameFlow
             (bool Changed, List<uint> RewardIds, List<InventoryItem> Items) missions = (false, [], []);
             member.Session.Accounts.Update(member.Session.Account.Id, account =>
             {
-                missions = DailyMissions.Progress(account, new MissionFacts(room.Mode) { Difficulty = ruleInfo?.Difficulty ?? 0, Statistics = own });
+                missions = DailyMissions.Progress(account, new MissionFacts(room.IsLadder ? MatchMode.Channel5Team : room.Mode) { Difficulty = ruleInfo?.Difficulty ?? 0, Statistics = own });
                 RecordBook book = account.Records;
                 if (!book.HasHostStatistics)
                 {
@@ -98,6 +96,12 @@ public static partial class GameFlow
                     book.MobKillsByCause[cause] += own.MobKillsByCause(cause);
                 }
                 book.Deaths += own.Deaths;
+                if (room.Mode == MatchMode.Jessium)
+                {
+                    ModeRecord glowRush = book.ModeOf("jes");
+                    if (own.JessiumWon) glowRush.MpWins++;
+                    if (own.JessiumLost) glowRush.MpLosses++;
+                }
             });
             member.Session.RefreshAccount();
             Log.Info(member.Session.Tag, $"Match statistics: {own.Kills} kill(s), {own.Assists} assist(s), {own.Deaths} death(s), {own.MobKills} mob kill(s), {own.Revives} revive(s)");
@@ -430,7 +434,21 @@ public static partial class GameFlow
     private static async Task PayAsync(Room room, MatchSummary summary, List<RoomMember> played, CancellationToken cancellationToken)
     {
         GameData data = GameData.Instance;
-        data.Results.Payouts.TryGetValue((byte)room.Mode, out ModePayout? payout);
+        if (summary.Formal) Handlers.RankHandler.LastUpdatedUtc = DateTime.UtcNow;
+        // Ranked play has its own payout row (mode 10 of the result table): no experience at all and about twice
+        // the BP of a team deathmatch. An unofficial round - somebody left - pays the BP of a team deathmatch.
+        data.Results.Payouts.TryGetValue((byte)(room.IsLadder ? MatchMode.Channel5Team : room.Mode), out ModePayout? payout);
+        ModePayout? goldPayout = payout;
+        if (room.IsLadder && room.LadderUnofficial) data.Results.Payouts.TryGetValue((byte)MatchMode.TeamDeathmatch, out goldPayout);
+        double[] teamAverage = [0, 0];
+        if (room.IsLadder)
+        {
+            for (int team = 0; team < 2; team++)
+            {
+                List<int> scores = played.Where(member => !member.IsObserver && member.Team == team).Select(member => member.Session.Account.LadderPoints).ToList();
+                teamAverage[team] = scores.Count == 0 ? 0 : scores.Average();
+            }
+        }
         data.Results.Bonus.TryGetValue(room.PlayedMapId, out BonusRule? bonus);
         data.Rules.TryGetValue(room.RuleId, out RuleInfo? ruleInfo);
         MatchLog log = room.Log;
@@ -450,12 +468,14 @@ public static partial class GameFlow
 
             (int expBoost, int goldBoost) = Boosters(player.Account);
             int baseExp = summary.Formal ? PayoutOf(payout?.Exp, summary, row, ruleInfo) : 0;
-            int baseGold = summary.Formal ? PayoutOf(payout?.Gold, summary, row, ruleInfo) : 0;
+            int baseGold = summary.Formal ? PayoutOf(goldPayout?.Gold, summary, row, ruleInfo) : 0;
             int exp = baseExp * (100 + expBoost) / 100;
             int gold = baseGold * (100 + goldBoost) / 100;
             int expBefore = player.Account.Experience;
             int goldBefore = player.Account.Gold;
-            int ladderPoints = room.IsLadder && row.Outcome > 0 ? LadderWinPoints : 0;
+            // The ranked reward panel reads the gem score change as a signed 16-bit value (client 0x71496D).
+            int ladderPoints = !room.IsLadder || room.LadderUnofficial ? 0
+                : LadderGemChange(player.Account.LadderPoints, teamAverage[member.Team == 0 ? 1 : 0], row.Outcome, player.Settings.LadderGemFactor);
             uint rewardId = summary.Formal && bonus is not null && summary.Seconds >= bonus.TimeMin && bonus.Rewards.Count > 0
                 ? bonus.Rewards[Math.Min(Dice.Weighted(bonus.Prob), bonus.Rewards.Count - 1)]
                 : 0;
@@ -465,6 +485,7 @@ public static partial class GameFlow
             List<InventoryItem> levelItems = [];
             (bool Changed, List<uint> RewardIds, List<InventoryItem> Items) missions = (false, [], []);
             byte levelBefore = player.Account.DisplayLevel;
+            byte gemRankBefore = player.Account.GemRank;
             player.Accounts.Update(player.Account.Id, account =>
             {
                 account.Experience += exp;
@@ -481,9 +502,9 @@ public static partial class GameFlow
                     if (room.IsLadder)
                     {
                         account.Ladder.Add(row.Outcome, score);
-                        account.LadderPoints = Math.Max(0, account.LadderPoints + (row.Outcome > 0 ? LadderWinPoints : row.Outcome < 0 ? -LadderLossPoints : 0));
+                        account.LadderPoints = Math.Max(0, account.LadderPoints + ladderPoints);
                     }
-                    if (key is not null) ApplyToRecords(account.Records, key, room.Mode, summary, row);
+                    if (key is not null) ApplyToRecords(account.Records, key, room.Mode, summary, row, ruleInfo?.Difficulty ?? 0);
                 }
                 else
                 {
@@ -493,7 +514,8 @@ public static partial class GameFlow
                 account.Level = data.LevelForExp(account.Experience, account.Level);
                 if (room.IsLadder) account.GemRank = LadderGrades.GradeOf(account.LadderPoints, LadderGrades.Table(player));
 
-                missions = DailyMissions.Progress(account, new MissionFacts(room.Mode)
+                // Ranked rounds are their own mode: missions that name team deathmatch do not count in them.
+                missions = DailyMissions.Progress(account, new MissionFacts(room.IsLadder ? MatchMode.Channel5Team : room.Mode)
                 {
                     Difficulty = ruleInfo?.Difficulty ?? 0,
                     Played = true,
@@ -512,6 +534,14 @@ public static partial class GameFlow
 
             bool levelUp = player.Account.DisplayLevel != levelBefore;
             row.Level = player.Account.DisplayLevel;
+            if (room.IsLadder)
+            {
+                await TrySendAsync(player, UserInfoPacket.LadderRatingChanged(LadderRating.FromPoints(player.Account.LadderPoints)), cancellationToken);
+                // Titles 24 / 25 of the result row: the gem rank went up / down with this match (client 0x7155B3).
+                row.LadderLevel = player.Account.GemRank;
+                if (player.Account.GemRank > gemRankBefore) row.Flags |= ResultFlag.LadderUp;
+                else if (player.Account.GemRank < gemRankBefore) row.Flags |= ResultFlag.LadderDown;
+            }
             if (levelUp) row.Flags |= ResultFlag.LevelUp;
             if (expBoost > 0 || goldBoost > 0) row.Flags |= ResultFlag.ItemBonus;
             PlayerLog own = log.Of(player.Account.Id);
@@ -538,11 +568,14 @@ public static partial class GameFlow
         }
     }
 
-    private const double GreatMarginShare = 0.5;
-    private const double CloseMarginShare = 0.1;
+    private const int GreatMargin = 5;
+    private const int NarrowMargin = 1;
+    private const int QuickMatchSeconds = 60;
 
-    private static void ApplyToRecords(RecordBook book, string key, MatchMode mode, MatchSummary summary, ResultRow row)
+    private static void ApplyToRecords(RecordBook book, string key, MatchMode mode, MatchSummary summary, ResultRow row, int difficulty)
     {
+        if (key == "suv") book.SurvivalPlayed(difficulty, summary.Success, summary.Stars, summary.Seconds);
+
         ModeRecord record = book.ModeOf(key);
         uint flags = (uint)row.Flags;
         IReadOnlyList<int> bits = RecordsPacket.TitleBitsOf(key);
@@ -585,8 +618,11 @@ public static partial class GameFlow
             int margin = Math.Abs(own - other);
             int top = Math.Max(own, other);
             bool perfect = margin > 0 && Math.Min(own, other) == 0;
-            bool great = !perfect && top > 0 && margin >= top * GreatMarginShare;
-            bool close = margin > 0 && margin <= Math.Max(1, top * CloseMarginShare);
+            // The special records, as the My Stats pages label them. Team deathmatch: "great margin over 5 scores"
+            // and "narrow margin as 1 score". Glow rush uses the first pair for "quickly under 1 minute"; its second
+            // pair ("when I was the match point") comes from the host's statistics instead.
+            bool great = key == "jes" ? summary.Seconds is > 0 and < QuickMatchSeconds : !perfect && margin > GreatMargin;
+            bool close = key != "jes" && margin == NarrowMargin;
             if (row.Outcome > 0)
             {
                 if (perfect) record.PerfectWins++;

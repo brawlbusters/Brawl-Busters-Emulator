@@ -148,7 +148,7 @@ public sealed class ResultRow
 
     public byte Level { get; set; }
 
-    public byte LadderLevel { get; init; }
+    public byte LadderLevel { get; set; }
 
     public byte Team { get; init; }
 
@@ -319,7 +319,7 @@ public sealed record MatchPayout(int ExpBefore, int ExpGain, int ExpBonus, int G
             .WriteUInt32((uint)Math.Max(0, GoldBefore))
             .WriteUInt16(Short(GoldGain))
             .WriteUInt16(Short(GoldBonus))
-            .WriteUInt16(Short(LadderPoints))
+            .WriteUInt16((ushort)(short)Math.Clamp(LadderPoints, short.MinValue, short.MaxValue))
             .WriteBool(LevelUp)
             .WriteByte((byte)Math.Clamp(WinCount, 0, 127))
             .WriteByte((byte)Math.Clamp(LoseCount, 0, 127))

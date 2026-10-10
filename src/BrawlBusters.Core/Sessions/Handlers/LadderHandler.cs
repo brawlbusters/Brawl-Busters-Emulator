@@ -44,20 +44,17 @@ public static class LadderPacket
     private const byte MatchingSub = 0x02;
     private const int TableValues = 7;
     private const int RecordValues = 6;
-    private static readonly TimeSpan SeasonLength = TimeSpan.FromDays(30);
 
     /// <summary>
-    /// sLadder 00: `u32 season end, u16 x 7 rank boundaries (see LadderGrades), u32 matches, wins, losses, draws,
+    /// sLadder 00: `u32 time the boundaries were last updated (the screen shows "Last updated: N m ago" from it,
+    /// UI m_iUpdateElapsedTimeSec), u16 x 7 rank boundaries (see LadderGrades), u32 matches, wins, losses, draws,
     /// score, gem score`.
     /// </summary>
     public static PacketWriter Data(Data.Account account, ushort[] table)
     {
         Data.MatchStats ladder = account.Ladder;
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        var seasonEnd = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero).Add(SeasonLength);
-        if (seasonEnd <= now) seasonEnd = now.Add(SeasonLength);
-
-        var writer = new PacketWriter(MsgCategory.sLadder, DataSub).WriteUInt32((uint)seasonEnd.ToUnixTimeSeconds());
+        var writer = new PacketWriter(MsgCategory.sLadder, DataSub)
+            .WriteUInt32((uint)new DateTimeOffset(LadderGrades.UpdatedUtc, TimeSpan.Zero).ToUnixTimeSeconds());
         for (int i = 0; i < TableValues; i++) writer.WriteUInt16(table.ElementAtOrDefault(i));
         return writer
             .WriteUInt32((uint)ladder.Matches)

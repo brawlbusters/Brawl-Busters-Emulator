@@ -37,6 +37,9 @@ public abstract class ClientSession
     /// <summary>The lobby player count this client was last told (see <see cref="LobbyFeed"/>).</summary>
     public ushort LobbyPlayers { get; set; }
 
+    /// <summary>The channel populations this session was last told (LobbyFeed), as "id:status,..".</summary>
+    public string ChannelStatuses { get; set; } = "";
+
     /// <summary>The ping to this server the client last reported (cUserInfo 04), in milliseconds.</summary>
     public ushort ServerPing { get; set; }
 

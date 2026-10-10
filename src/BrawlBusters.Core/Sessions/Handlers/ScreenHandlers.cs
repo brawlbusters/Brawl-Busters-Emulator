@@ -311,8 +311,14 @@ public sealed class LobbyHandler : IMessageHandler
                 string password = reader.ReadString();
                 var mode = (MatchMode)reader.ReadByte();
                 byte maxPlayers = reader.ReadByte();
-                Log.Info(session.Tag, $"Creating room '{title}': mode {(byte)mode}, max {maxPlayers}{(password.Length > 0 ? ", with password" : "")} (rest {Log.Hex(reader.ReadToEnd())})");
-                return GameFlow.CreateRoomAsync(session, title, password, mode, maxPlayers, cancellationToken);
+                // Four option bytes close the request; the create dialog only offers the last two (-intrusion,
+                // -observation), a recorded request with observers allowed ends 00 00 00 01.
+                byte[] options = reader.ReadToEnd();
+                bool intrusion = options.Length >= 3 && options[^2] != 0;
+                bool observation = options.Length < 1 || options[^1] != 0;
+                Log.Info(session.Tag, $"Creating room '{title}': mode {(byte)mode}, max {maxPlayers}{(password.Length > 0 ? ", with password" : "")}"
+                    + $"{(intrusion ? ", intrusion" : "")}{(observation ? ", observers" : "")} (options {Log.Hex(options)})");
+                return GameFlow.CreateRoomAsync(session, title, password, mode, maxPlayers, cancellationToken, intrusion, observation);
             }
             case LobbyRequest.Refresh:
                 return GameFlow.RefreshLobbyAsync(session, reader.ReadUInt16(), cancellationToken);

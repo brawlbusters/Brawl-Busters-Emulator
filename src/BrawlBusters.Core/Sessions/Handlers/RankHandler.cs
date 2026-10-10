@@ -63,6 +63,37 @@ public sealed class RankHandler : IMessageHandler
 
     private readonly record struct Entry(uint Id, string Nickname, int Record);
 
+    private const byte UpdateTimeReply = 0x0A;
+
+    /// <summary>When a counted match last changed the boards - the leaderboard's "last updated" line.</summary>
+    public static DateTime LastUpdatedUtc { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// sRank 0A `u32 unix time`: raises event 30553, which the leaderboard shows as "Last updated .. hours ago"
+    /// (UI SetLeaderboardUpdateTime). Without it the line stays empty.
+    /// </summary>
+    public static PacketWriter UpdateTimePacket()
+        => new PacketWriter(MsgCategory.sRank, UpdateTimeReply).WriteUInt32((uint)new DateTimeOffset(LastUpdatedUtc, TimeSpan.Zero).ToUnixTimeSeconds());
+
+    /// <summary>
+    /// The day the daily boards show: the latest day anybody played a counted match. Until the first match of a new
+    /// day the boards keep showing the day before instead of going empty at midnight.
+    /// </summary>
+    private static string BoardDay(ClientSession session)
+    {
+        lock (HistoryGate)
+        {
+            if (_boardDay is not null && DateTime.UtcNow - _boardDayAt < BoardDayCache) return _boardDay;
+            _boardDay = Players(session).Where(account => account.DailyStats.Count > 0).Select(account => account.DailyDay).DefaultIfEmpty("").Max() ?? "";
+            _boardDayAt = DateTime.UtcNow;
+            return _boardDay;
+        }
+    }
+
+    private static readonly TimeSpan BoardDayCache = TimeSpan.FromSeconds(10);
+    private static string? _boardDay;
+    private static DateTime _boardDayAt;
+
     public static PacketWriter OwnStandingPacket(ClientSession session)
     {
         RememberRanks(session);
@@ -78,7 +109,7 @@ public sealed class RankHandler : IMessageHandler
                     uint rank = (uint)(index + 1);
                     writer.WriteByte((byte)(type + 1)).WriteByte(mode).WriteByte(column)
                         .WriteUInt32(rank)
-                        .WriteUInt32((uint)RecordOf(session.Account, type, mode, column))
+                        .WriteUInt32((uint)RecordOf(session.Account, type, mode, column, BoardDay(session)))
                         .WriteUInt32(rank == 0 ? 0 : PreviousRank(type, mode, column, session.Account.Id, rank));
                 }
             }
@@ -104,7 +135,7 @@ public sealed class RankHandler : IMessageHandler
         }
 
         var writer = new PacketWriter(MsgCategory.sRank, PageReply)
-            .WriteUInt32((uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            .WriteUInt32((uint)new DateTimeOffset(LastUpdatedUtc, TimeSpan.Zero).ToUnixTimeSeconds())
             .WriteByte(type)
             .WriteByte(mode)
             .WriteByte((byte)rows.Count);
@@ -132,20 +163,57 @@ public sealed class RankHandler : IMessageHandler
             _ => stats.Assists,
         };
 
-    private static int RecordOf(Account account, byte type, byte mode, byte column)
+    private static int RecordOf(Account account, byte type, byte mode, byte column, string boardDay)
     {
         if (mode < 1 || mode > RankingModes.Length) return 0;
-        bool today = account.DailyDay == Account.DayOf(DateTime.UtcNow);
+        bool today = boardDay.Length > 0 && account.DailyDay == boardDay;
         return RankingModes[mode - 1].Sum(matchMode => RecordOf(
             type == Daily ? (today ? account.DailyStats.GetValueOrDefault((byte)matchMode) : null) : account.ModeStats.GetValueOrDefault((byte)matchMode),
             column));
     }
 
+    private static List<Account>? _players;
+    private static DateTime _playersAt;
+
+    /// <summary>All accounts, read once for a burst of board requests - reading them is the slow part.</summary>
+    private static List<Account> Players(ClientSession session)
+    {
+        lock (Boards)
+        {
+            if (_players is not null && DateTime.UtcNow - _playersAt < BoardCache) return _players;
+        }
+
+        List<Account> players = session.Accounts.All().ToList();
+        lock (Boards)
+        {
+            _players = players;
+            _playersAt = DateTime.UtcNow;
+        }
+        return players;
+    }
+
+    private static readonly TimeSpan BoardCache = TimeSpan.FromSeconds(5);
+    private static readonly Dictionary<(byte Type, byte Mode, byte Column), (DateTime At, List<Entry> Rows)> Boards = [];
+
+    /// <summary>One board, kept for a few seconds: opening the leaderboard asks for thirty of them at once.</summary>
     private static List<Entry> Ranked(ClientSession session, byte type, byte mode, byte column)
     {
-        IEnumerable<Entry> entries = session.Accounts.All()
+        lock (Boards)
+        {
+            if (Boards.TryGetValue((type, mode, column), out var cached) && DateTime.UtcNow - cached.At < BoardCache) return cached.Rows;
+        }
+
+        List<Entry> rows = Rank(session, type, mode, column);
+        lock (Boards) Boards[(type, mode, column)] = (DateTime.UtcNow, rows);
+        return rows;
+    }
+
+    private static List<Entry> Rank(ClientSession session, byte type, byte mode, byte column)
+    {
+        string boardDay = BoardDay(session);
+        IEnumerable<Entry> entries = Players(session)
             .Where(account => account.HasNickname)
-            .Select(account => new Entry(account.Id, account.Nickname, RecordOf(account, type, mode, column)));
+            .Select(account => new Entry(account.Id, account.Nickname, RecordOf(account, type, mode, column, boardDay)));
 
         if (session.Settings.Bots.ShowOnLeaderboard)
         {

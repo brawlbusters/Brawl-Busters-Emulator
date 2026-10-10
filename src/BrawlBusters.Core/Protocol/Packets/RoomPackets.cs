@@ -29,7 +29,6 @@ public static class RoomPacket
     private const int StatusOffset = 6;
     private const int WinStreakOffset = 7;
     private const int PingOffset = 10;
-    private const byte RecordedRoomOption = 8;
 
     public const byte StatusWaiting = 2;
 
@@ -60,7 +59,7 @@ public static class RoomPacket
             .WriteByte(room.LadderType)
             .WriteUInt16(room.Id)
             .WriteWideString(room.Title)
-            .WriteByte(RecordedRoomOption)
+            .WriteByte(room.Options)
             .WriteByte(room.PlayerCount)
             .WriteByte(room.MaxPlayers)
             .WriteByte(room.State);
@@ -254,7 +253,7 @@ public static class RoomPacket
         var writer = new PacketWriter(MsgCategory.sRoom, 8)
             .WriteByte(0x1F)
             .WriteWideString(room.Title)
-            .WriteByte(RecordedRoomOption)
+            .WriteByte(room.Options)
             .WriteByte(room.PlayerCount)
             .WriteByte(room.MaxPlayers)
             .WriteByte(state ?? (phase == RoomPhase.Created && room.State == playing ? room.State : Phases[phase].State));

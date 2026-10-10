@@ -278,6 +278,30 @@ public sealed class RecordBook
 
     public int[] BossClears { get; set; } = new int[BossGrades];
 
+    public const int SurvivalLevels = 3;
+
+    /// <summary>Zombie survival per difficulty (rookie, regular, veteran): rounds, clears, stars, most stars in a round, fastest clear in seconds.</summary>
+    public int[] SurvivalRounds { get; set; } = new int[SurvivalLevels];
+
+    public int[] SurvivalClears { get; set; } = new int[SurvivalLevels];
+
+    public int[] SurvivalStars { get; set; } = new int[SurvivalLevels];
+
+    public int[] SurvivalStarMax { get; set; } = new int[SurvivalLevels];
+
+    public int[] SurvivalBestTime { get; set; } = new int[SurvivalLevels];
+
+    public void SurvivalPlayed(int difficulty, bool cleared, int stars, int seconds)
+    {
+        int level = Math.Clamp(difficulty - 1, 0, SurvivalLevels - 1);
+        SurvivalRounds[level]++;
+        SurvivalStars[level] += Math.Max(0, stars);
+        SurvivalStarMax[level] = Math.Max(SurvivalStarMax[level], stars);
+        if (!cleared) return;
+        SurvivalClears[level]++;
+        if (seconds > 0 && (SurvivalBestTime[level] == 0 || seconds < SurvivalBestTime[level])) SurvivalBestTime[level] = seconds;
+    }
+
     public Dictionary<string, BossRecord> Bosses { get; set; } = [];
 
     public Dictionary<string, ModeRecord> Modes { get; set; } = [];
@@ -337,6 +361,11 @@ public sealed class ModeRecord
     public int GreatLosses { get; set; }
 
     public int CloseWins { get; set; }
+
+    /// <summary>Glow rush: matches the host reported as won / lost "by MP" (JES_WIN_MP, JES_LOSE_MP of cHost 0D).</summary>
+    public int MpWins { get; set; }
+
+    public int MpLosses { get; set; }
 
     public int CloseLosses { get; set; }
 

@@ -20,10 +20,16 @@ public static class LadderGrades
     /// <summary>Share of the ranked players that stays below each rank, lowest rank first.</summary>
     private static readonly double[] ShareBelow = [0.20, 0.45, 0.65, 0.80, 0.92, 0.98];
 
-    private static readonly TimeSpan CacheTime = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan CacheTime = TimeSpan.FromHours(1);
     private static readonly object Gate = new();
     private static ushort[]? _table;
     private static DateTime _tableAt;
+
+    /// <summary>When the boundaries were last worked out - the ranked screen shows it as "Last updated: .. ago".</summary>
+    public static DateTime UpdatedUtc
+    {
+        get { lock (Gate) return _tableAt == default ? DateTime.UtcNow : _tableAt; }
+    }
 
     public static ushort[] Table(ClientSession session)
     {

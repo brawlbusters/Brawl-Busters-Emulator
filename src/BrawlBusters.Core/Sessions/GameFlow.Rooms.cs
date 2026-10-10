@@ -26,7 +26,8 @@ public static partial class GameFlow
         return choices.Count == 0 ? map.Id : choices[Random.Shared.Next(choices.Count)];
     }
 
-    public static async Task CreateRoomAsync(ClientSession session, string title, string password, MatchMode mode, byte maxPlayers, CancellationToken cancellationToken)
+    public static async Task CreateRoomAsync(ClientSession session, string title, string password, MatchMode mode, byte maxPlayers, CancellationToken cancellationToken,
+        bool allowIntrusion = true, bool allowObservation = true)
     {
         if (session.Room is not null) await LeaveQuietlyAsync(session);
 
@@ -52,6 +53,8 @@ public static partial class GameFlow
         var player = HolePunchServer.FindPlayerEndPoint(userId) ?? session.Connection.RemoteEndPoint;
         Room room = RoomRegistry.Instance.Create(session.ChannelId, title, userId, player, mode, maxPlayers, levelId, ruleId);
         room.Password = password;
+        room.AllowIntrusion = allowIntrusion;
+        room.AllowObservation = allowObservation;
         room.Join(session);
         session.Room = room;
         Log.Info(session.Tag, $"Room {room.Id}: {mode}, {maxPlayers} players, map {levelId} ({map?.Name ?? "?"}), rule {ruleId}");
@@ -96,7 +99,7 @@ public static partial class GameFlow
             null => NetError.Lobby_NotExistRoom,
             _ when room.ChannelId != session.ChannelId && !invited => NetError.Lobby_NotExistRoom,
             _ when room.Password.Length > 0 && room.Password != password => NetError.Lobby_WrongPassword,
-            _ when room.State != RoomPacket.StateOf(RoomPhase.Created) && !CanIntrude(room) => NetError.Lobby_CannotJoinRoom,
+            _ when room.State != RoomPacket.StateOf(RoomPhase.Created) && (!CanIntrude(room) || !room.AllowIntrusion) => NetError.Lobby_CannotJoinRoom,
             _ when room.PlayerCount >= room.MaxPlayers => NetError.Lobby_CannotJoinRoom,
             _ => null,
         };
@@ -249,6 +252,7 @@ public static partial class GameFlow
         ushort playedMap = PlayedMap(room);
         room.PlayedMapId = playedMap;
         room.MatchStartedUtc = null;
+        room.LadderUnofficial = false;
         room.Log = new MatchLog();
         foreach (RoomMember member in room.Members)
         {
@@ -256,6 +260,11 @@ public static partial class GameFlow
             member.InResult = false;
         }
         IPEndPoint relay = Relay(session);
+        // A ranked room never tells its players the relay address, so they never register with the relay port and
+        // have no opening for it in their firewall or router (client 0x5D83C0 starts the relay for normal rooms
+        // only). Their relay is the server port every one of them punched at login; it forwards relay data too.
+        if (room.IsLadder && HolePunchServer.FindPunchedPort(room.HostUserId) is { } punched)
+            relay = new IPEndPoint(relay.Address, punched);
         room.HostLoaded = false;
         Log.Info(session.Tag, $"Room {room.Id}: playing map {playedMap} with {room.Members.Count} player(s)");
 
@@ -273,7 +282,8 @@ public static partial class GameFlow
     {
         RoomMember? member = room.Find(session);
         string what = asObserver ? "observe" : "join";
-        if (member is null || session.InMatch || member.Intruding || !CanIntrude(room) || member.IsObserver != asObserver)
+        bool allowed = asObserver ? room.AllowObservation : room.AllowIntrusion;
+        if (member is null || session.InMatch || member.Intruding || !CanIntrude(room) || member.IsObserver != asObserver || !allowed)
         {
             Log.Info(session.Tag, $"Room {room.Id}: request to {what} the running match refused");
             await session.SendAsync(RoomPacket.Error(asObserver ? NetError.Room_CanNotObserve : NetError.Room_CanNotIntrude), cancellationToken);
@@ -520,6 +530,8 @@ public static partial class GameFlow
             RoomRegistry.Instance.RemoveHostedBy(session.Account.Id);
             return;
         }
+
+        if (room.IsLadder && !afterMatch) LadderLeftRound(session, room);
 
         if (room.IsHost(session))
         {

@@ -178,6 +178,8 @@ public static class RecordsPacket
     private const int TdmMarginsOffset = 0x3C;
     private const int JesMarginsOffset = 0x40;
     private const int SuvRoundsOffset = 4;
+    private const int SuvLevelSize = 12;
+    private const int BestSuvLevels = 0x0E;
     private const int SuvSlaysOffset = 0x28;
     private const int SuvRevivesOffset = 0x30;
     private const int SuvAttackOffset = 0x34;
@@ -276,9 +278,23 @@ public static class RecordsPacket
         ModeRecord tdm = book.ModeOf("tdm"), jes = book.ModeOf("jes"), suv = book.ModeOf("suv"), ffa = book.ModeOf("ffa"), bsr = book.ModeOf("bsr");
         PutTeamPart(TdmPart, tdm, 3, TdmTitlesOffset, TdmTitleBits, TdmMarginsOffset, MatchMode.TeamDeathmatch, MatchMode.Channel5Team);
         PutTeamPart(JesPart, jes, 4, JesTitlesOffset, JesTitleBits, JesMarginsOffset, MatchMode.Jessium);
+        // Glow rush labels the four "quickly under 1 minute" (wins, losses) and "when I was the match point"
+        // (wins, losses): tr_JES_FastWin .. tr_JES_MPLoss. The match point pair comes from the host's statistics.
+        PutShort(JesPart + JesMarginsOffset + 4, jes.MpWins);
+        PutShort(JesPart + JesMarginsOffset + 6, jes.MpLosses);
 
-        Put(SuvPart + SuvRoundsOffset, account.StatsOf(MatchMode.Survival).Matches);
-        Put(SuvPart + SuvRoundsOffset + 4, account.StatsOf(MatchMode.Survival).Wins);
+        // Zombie survival by difficulty (client 0x7AC95B): three blocks of `u32 rounds, clears, stars` for rookie,
+        // regular and veteran. Rounds played before the difficulty was recorded stay with rookie.
+        MatchStats survival = account.StatsOf(MatchMode.Survival);
+        int oldRounds = Math.Max(0, survival.Matches - book.SurvivalRounds.Sum());
+        int oldClears = Math.Max(0, survival.Wins - book.SurvivalClears.Sum());
+        for (int level = 0; level < RecordBook.SurvivalLevels; level++)
+        {
+            int at = SuvPart + SuvRoundsOffset + level * SuvLevelSize;
+            Put(at, book.SurvivalRounds.ElementAtOrDefault(level) + (level == 0 ? oldRounds : 0));
+            Put(at + 4, book.SurvivalClears.ElementAtOrDefault(level) + (level == 0 ? oldClears : 0));
+            Put(at + 8, book.SurvivalStars.ElementAtOrDefault(level));
+        }
         Put(SuvPart + SuvSlaysOffset, suv.Sums[0]);
         Put(SuvPart + SuvRevivesOffset, suv.Sums[1]);
         Put(SuvPart + SuvAttackOffset, suv.Sums[2]);
@@ -313,6 +329,12 @@ public static class RecordsPacket
         best[BestJes] = Small(jes.BestWinStreak);
         best[BestJes + 1] = Small(jes.BestLoseStreak);
         for (int i = 0; i < 3; i++) best[BestJes + 2 + i] = Small(jes.Best[i]);
+        for (int level = 0; level < RecordBook.SurvivalLevels; level++)
+        {
+            // `u8 most stars in a round, i16 fastest clear in seconds` per difficulty (0x7AD13B, 0x7AC96E).
+            best[BestSuvLevels + level * 3] = Small(book.SurvivalStarMax.ElementAtOrDefault(level));
+            ShortAt(best, BestSuvLevels + level * 3 + 1, book.SurvivalBestTime.ElementAtOrDefault(level));
+        }
         ShortAt(best, BestSuv, suv.Best[0]);
         best[BestSuv + 2] = Small(suv.Best[1]);
         best[BestSuv + 3] = Small(suv.Best[2]);

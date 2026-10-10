@@ -147,11 +147,28 @@ public sealed class BotDirector
         lock (director._gate) return director._bots.Count(bot => bot.Room is null && bot.GuestOf is null && bot.Channel == channelId);
     }
 
+    /// <summary>Players a channel holds before it counts as full; set from the settings at start-up.</summary>
+    public static int ChannelCapacity { get; set; } = 200;
+
+    /// <summary>
+    /// How full a channel is - the bar the channel list shows. The players really in it always count; the simulated
+    /// crowd is added when that is switched on.
+    /// </summary>
     public static ChannelStatus StatusOf(ushort channelId, int realPlayers)
     {
         BotDirector? director = _instance;
-        if (director is null || !director._fillChannels) return ChannelStatus.Low;
-        return director.StatusFor(director.Crowd(channelId, DateTime.UtcNow) + realPlayers);
+        int crowd = director is not null && director._fillChannels ? director.Crowd(channelId, DateTime.UtcNow) : 0;
+        return StatusFor(crowd + realPlayers, director?._capacity ?? Math.Max(1, ChannelCapacity));
+    }
+
+    private static ChannelStatus StatusFor(int players, int capacity)
+    {
+        double share = (double)players / capacity;
+        return share >= 1 ? ChannelStatus.Max
+            : share >= 0.75 ? ChannelStatus.SemiMax
+            : share >= 0.5 ? ChannelStatus.High
+            : share >= 0.25 ? ChannelStatus.Medium
+            : ChannelStatus.Low;
     }
 
     private int Crowd(ushort channelId, DateTime now)
@@ -163,15 +180,7 @@ public sealed class BotDirector
         return (int)Math.Round(_capacity * Math.Clamp(share, 0, 1));
     }
 
-    private ChannelStatus StatusFor(int players)
-    {
-        double share = (double)players / _capacity;
-        return share >= 1 ? ChannelStatus.Max
-            : share >= 0.75 ? ChannelStatus.SemiMax
-            : share >= 0.5 ? ChannelStatus.High
-            : share >= 0.25 ? ChannelStatus.Medium
-            : ChannelStatus.Low;
-    }
+    private ChannelStatus StatusFor(int players) => StatusFor(players, _capacity);
 
     private void ReportCrowd(DateTime now)
     {

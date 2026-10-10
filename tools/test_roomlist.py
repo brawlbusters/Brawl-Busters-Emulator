@@ -24,15 +24,35 @@ def main():
 
     host, _ = player("rh")
     host.send(bytes.fromhex("3200") + ws("live list") + bytes([0, 0, 2, 6, 0, 0, 1, 1]))
-    entered = next(reply for reply in drain(host) if reply[:2] == b"\x10\x05")
+    entered = next(reply for reply in drain(host) if reply[:2] == bytes([0x10, 0x05]))
     room = entered[3:5]
 
-    seen = [reply for reply in drain(watcher, 2.5) if reply[:1] == b"\x0d"]
+    seen = [reply for reply in drain(watcher, 2.5) if reply[:1] == bytes([0x0D])]
     added = next((reply for reply in seen if reply[1] == 1), b"")
     title = ws("live list")
-    ok &= check("a new room is announced: sRoomList 01, id, title, kind 8, 1 of 6 players",
-                added[2:4] == room and added[4:4 + len(title)] == title and added[4 + len(title):7 + len(title)] == bytes([8, 1, 6]),
+    ok &= check("a new room is announced: sRoomList 01, id, title, options 0C (intrusion + observers, as asked), 1 of 6 players",
+                added[2:4] == room and added[4:4 + len(title)] == title and added[4 + len(title):7 + len(title)] == bytes([0x0C, 1, 6]),
                 str([reply.hex() for reply in seen]))
+
+    # a room with a password is listed as private (option bit 0), and only opens with the password
+    locked_host, _ = player("rp")
+    locked_title = ws("locked")
+    locked_host.send(bytes.fromhex("3200") + locked_title + struct.pack("<H", 4) + b"pass" + bytes([2, 6, 0, 0, 0, 1]))
+    drain(locked_host)
+    seen = [reply for reply in drain(watcher, 2.5) if reply[:2] == bytes([0x0D, 0x01])]
+    locked = next((reply for reply in seen if reply[4:4 + len(locked_title)] == locked_title), b"")
+    ok &= check("a room with a password is announced with option bit 0 set (private) and observers: 09",
+                len(locked) > 4 + len(locked_title) and locked[4 + len(locked_title)] == 0x09, str([reply.hex() for reply in seen]))
+    stranger, _ = player("rs")
+    stranger.send(bytes.fromhex("3201") + locked[2:4] + struct.pack("<H", 0))
+    refused = [reply.hex() for reply in drain(stranger)]
+    ok &= check("joining it without the password is refused (sLobby 02)", any(reply.startswith("0f02") for reply in refused), str(refused))
+    stranger.send(bytes.fromhex("3201") + locked[2:4] + struct.pack("<H", 4) + b"pass")
+    entered = [reply.hex()[:6] for reply in drain(stranger)]
+    ok &= check("joining it with the password works (sRoom 05)", any(reply.startswith("1005") for reply in entered), str(entered))
+    stranger.sock.close()
+    locked_host.sock.close()
+    drain(watcher, 2.5)
 
     guest, _ = player("rg")
     guest.send(bytes.fromhex("3201") + room + bytes(3))

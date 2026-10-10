@@ -24,7 +24,7 @@ def main():
     opened = drain(a)
     data = next((reply for reply in opened if reply[:2] == b"\x11\x00"), b"")
     ok &= check("open ladder: sMode 0B + sLadder 00 (4 + 14 + 24 bytes)", has(opened, b"\x0e\x0b") and len(data) == 2 + 42, data.hex())
-    ok &= check("season end lies in the future", len(data) > 6 and struct.unpack_from("<I", data, 2)[0] > time.time())
+    ok &= check("the table's update time is not in the future", len(data) > 6 and 0 < struct.unpack_from("<I", data, 2)[0] <= time.time() + 5)
 
     a.send(bytes.fromhex("340501"))
     created = drain(a)

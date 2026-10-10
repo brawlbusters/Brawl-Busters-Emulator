@@ -27,6 +27,8 @@ public sealed class UdpHandler : IMessageHandler
             : body is [0, 1, ..] ? "server hole punch succeeded"
             : body is [1, 0, ..] ? "relay hole punch FAILED"
             : body is [1, 1, ..] ? "relay hole punch succeeded"
+            : body is [3, 0, ..] ? "connection to another player through the relay FAILED"
+            : body is [3, 1, ..] ? "connection to another player through the relay succeeded"
             : "not decoded";
         if (body is [2, ..])
             Log.Debug(session.Tag, $"cUDP {Log.Hex(body)} (hole punch to another player {(body.Length > 1 && body[1] == 1 ? "succeeded" : "failed")})");

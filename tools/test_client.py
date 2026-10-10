@@ -154,8 +154,10 @@ class Client:
 
 
 def first_channel():
-    """The id of the first channel in config/emulator.json (1 when none are configured)."""
+    """The channel the tests play in: BB_TEST_CHANNEL when set, else the first one in config/emulator.json the test level may enter."""
     import json
+    if os.environ.get("BB_TEST_CHANNEL"):
+        return int(os.environ["BB_TEST_CHANNEL"])
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
         with open(os.path.join(root, "config", "emulator.json"), encoding="utf-8-sig") as handle:

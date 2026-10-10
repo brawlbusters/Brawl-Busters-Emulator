@@ -137,6 +137,7 @@ public static class UserInfoPacket
     public const int CanUnlockClassFlag = 11;
     public const int MissionsSize = 24;
 
+    private const ushort LadderRatingField = 1 << 3;
     private const ushort FlagsField = 1 << 6;
     private const ushort MissionsField = 1 << 7;
 
@@ -154,6 +155,15 @@ public static class UserInfoPacket
         return new PacketWriter(MsgCategory.sUserInfo, 1).WriteZeros(8).WriteUInt16(HomeStatsField)
             .WriteUInt16(HomeStatsSize).WriteBytes(mask).WriteBytes(homeStats);
     }
+
+    /// <summary>
+    /// Partial update of the private ladder rating (second part, field bit 3; client 0x84C6A0): a `u64` whose low
+    /// byte says which of the eight bytes follow, then those bytes. The result screen of a ranked match and the
+    /// GEM line of the profile read the gem score from this rating.
+    /// </summary>
+    public static PacketWriter LadderRatingChanged(LadderRating rating)
+        => new PacketWriter(MsgCategory.sUserInfo, 1).WriteZeros(8).WriteUInt16(LadderRatingField)
+            .WriteUInt64(0xFF).WriteBytes(rating.ToBytes());
 
     public static PacketWriter MissionsChanged(byte[] missions)
         => new PacketWriter(MsgCategory.sUserInfo, 1).WriteZeros(8).WriteUInt16(MissionsField)
@@ -467,7 +477,7 @@ public sealed record RoomListEntry(string Title, byte Kind, byte Players, byte M
     public const byte AllOfPartTwo = 0x07;
 
     public static RoomListEntry Of(Sessions.Room room)
-        => new(room.Title, 8, room.PlayerCount, room.MaxPlayers, room.State, room.LevelId, room.HostEndPoint, 2);
+        => new(room.Title, room.Options, room.PlayerCount, room.MaxPlayers, room.State, room.LevelId, room.HostEndPoint, 2);
 }
 
 public static class LobbyPacket

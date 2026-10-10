@@ -6,7 +6,7 @@ namespace BrawlBusters.Core.Sessions;
 /// <summary>
 /// Keeps the room list of every player in a lobby up to date without a refresh: a new room is announced
 /// (sRoomList 01), a closed one removed (02) and a changed one updated field by field (03). The player count of the
-/// lobby follows the same way (sLobby 01).
+/// lobby follows the same way (sLobby 01), and so do the population bars of the channel list (sServer 01).
 /// Each session remembers the list it was last told about, so it only ever hears what is new to it.
 /// </summary>
 public static class LobbyFeed
@@ -49,6 +49,16 @@ public static class LobbyFeed
             Dictionary<ushort, RoomListEntry> now = RoomRegistry.Instance.InChannel(session.ChannelId).ToDictionary(room => room.Id, RoomListEntry.Of);
             try
             {
+                // The population bars of the channel list: sent again whenever one of them moves.
+                IReadOnlyList<ChannelInfo> channels = ChannelDirectory.Build(session.Settings, session.Account);
+                string statuses = string.Join(",", channels.Select(channel => $"{channel.Id}:{(byte)channel.Status}"));
+                if (statuses != session.ChannelStatuses)
+                {
+                    bool first = session.ChannelStatuses.Length == 0;
+                    session.ChannelStatuses = statuses;
+                    if (!first) await session.SendAsync(ServerPacket.ChannelStates(channels), cancellationToken);
+                }
+
                 ushort players = GameFlow.LobbyPlayerCount(session.ChannelId);
                 if (players != session.LobbyPlayers)
                 {

@@ -78,6 +78,30 @@ public sealed class EmulatorSettings
     /// </summary>
     public int LadderGradeMinPlayers { get; set; } = 30;
 
+    /// <summary>
+    /// Log a player who already has a character straight into the main screen, without the Intro screen state first.
+    /// Set to false to get the old order back (sMode 00 for everybody) if a client has trouble logging in.
+    /// </summary>
+    public bool SkipIntroScreenForExistingCharacters { get; set; } = true;
+
+    /// <summary>
+    /// Put a player who enters the lobby for the first time after logging in into the busiest channel he may enter
+    /// that is not full, instead of the one his client asks for.
+    /// </summary>
+    public bool AutoAssignChannel { get; set; } = true;
+
+    /// <summary>Players per team in a ranked match. The original game always played ranked four against four.</summary>
+    public int LadderTeamSize { get; set; } = 4;
+
+    /// <summary>Gem score a player loses for leaving a ranked round; the round then counts for nobody.</summary>
+    public int LadderLeavePenalty { get; set; } = 50;
+
+    /// <summary>
+    /// The most gem score one ranked round can move. How much of it a player wins or loses depends on the own score
+    /// against the other team's average - the original formula is not known, this is the usual rating formula.
+    /// </summary>
+    public int LadderGemFactor { get; set; } = 32;
+
     /// <summary>"NEW" tags on the main menu: flag byte 2 of the player record, bit 0 My Locker, bit 1 Single Play, bit 2 Ranked.</summary>
     public bool NewTagMyLocker { get; set; }
 

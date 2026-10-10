@@ -45,6 +45,7 @@ try
 
     await using AccountRepository accounts = await AccountRepository.OpenAsync(backend, shutdown.Token);
     ChannelDirectory.Configure(channels);
+    BotDirector.ChannelCapacity = settings.Bots.ChannelCapacity;
     AuthorityNotifier.Attach(accounts);
     Log.Info(ServerName, $"Channels: {string.Join(", ", channels.Select(channel => channel.Id + (channel.StaffOnly ? " (staff)" : "")))}");
 

@@ -23,7 +23,13 @@ public static partial class GameFlow
             return;
         }
 
-        await session.SendAsync(ModePacket.Build(GameMode.Intro), cancellationToken);
+        // The Intro screen is where a character is made. Entering it makes the client build its character-creation
+        // sequence (dispatcher 0x5C70B0 raises event 30801; the sequence asks for a nickname as its first step,
+        // 0x62CAFE). A player who already has a character must not be sent through it: that sequence was seen to
+        // come up later, in the middle of a ranked match, as a "enter your nickname" box. The messages that follow
+        // (sUserStart, sUserInfo, sMode) are handled by the client's global handlers, in any screen.
+        if (!account.HasNickname || !account.HasCharacter || !session.Settings.SkipIntroScreenForExistingCharacters)
+            await session.SendAsync(ModePacket.Build(GameMode.Intro), cancellationToken);
         await session.SendAsync(KeepAlivePacket.Idle(), cancellationToken);
 
         if (!account.HasNickname) return;
@@ -196,6 +202,7 @@ public static partial class GameFlow
         await session.SendAsync(ModePacket.Build(GameMode.Ranking), cancellationToken);
 
         await session.SendAsync(Handlers.RankHandler.OwnStandingPacket(session), cancellationToken);
+        await session.SendAsync(Handlers.RankHandler.UpdateTimePacket(), cancellationToken);
     }
 
     public static async Task EnterLadderAsync(ClientSession session, CancellationToken cancellationToken)
@@ -226,8 +233,30 @@ public static partial class GameFlow
         return full && !session.Account.Can(Permission.EnterFullChannel) ? NetError.Lobby_ChannelFull : null;
     }
 
+    /// <summary>
+    /// The channel a player who is in none yet is put into: among those he may enter and that are not full, the one
+    /// with the most players - so people meet instead of each sitting alone in the channel their client asked for.
+    /// The asked-for channel wins a tie; 0 when no channel is open to him.
+    /// </summary>
+    private static ushort SuitableChannel(ClientSession session, ushort asked)
+        => ChannelDirectory.Channels
+            .Select((channel, order) => (channel.Id, Order: order))
+            .Where(channel => ChannelRefusal(session, channel.Id) is null)
+            .OrderByDescending(channel => SessionRegistry.InChannel(channel.Id))
+            .ThenByDescending(channel => channel.Id == asked)
+            .ThenBy(channel => channel.Order)
+            .Select(channel => channel.Id)
+            .FirstOrDefault();
+
     public static async Task EnterChannelAsync(ClientSession session, ushort channelId, CancellationToken cancellationToken)
     {
+        if (session.ChannelId == 0 && session.Settings.AutoAssignChannel && ChannelDirectory.Channels.Count > 0
+            && SuitableChannel(session, channelId) is var suitable and not 0 && suitable != channelId)
+        {
+            Log.Info(LogChannel.Lobby, session.Tag, $"First channel: {suitable} instead of the requested {channelId} ({SessionRegistry.InChannel(suitable)} player(s) there)");
+            channelId = suitable;
+        }
+
         if (ChannelRefusal(session, channelId) is { } refusal)
         {
             Log.Info(LogChannel.Lobby, session.Tag, $"Channel {channelId} refused (level {session.Account.DisplayLevel}): {refusal}");
