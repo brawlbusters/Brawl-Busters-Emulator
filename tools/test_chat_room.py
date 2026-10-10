@@ -5,7 +5,7 @@ import time
 
 from test_client import Client, check, frame, lzf_decompress, lzf_literal, ws
 
-CHAT_PORT = int(__import__("os").environ.get("BB_CHAT_PORT", "25900"))
+CHAT_PORT = int(__import__("os").environ.get("BB_CHAT_PORT", "27900"))
 
 
 class ChatClient:

@@ -1,48 +1,10 @@
+using System.Reflection;
 using BrawlBusters.Core.Data;
 using BrawlBusters.Core.Logging;
 using BrawlBusters.Core.Security;
 using BrawlBusters.Core.Sessions;
 
 namespace BrawlBusters.Core.Commands;
-
-/// <summary>Who runs a command and how the answer gets back to them (room chat, chat server or the server console).</summary>
-public sealed class CommandContext
-{
-    public required AccountRepository Accounts { get; init; }
-
-    public required string Tag { get; init; }
-
-    public required Func<string, Task> Reply { get; init; }
-
-    /// <summary>The account of the caller; <c>null</c> for the server console, which may do everything.</summary>
-    public Account? Caller { get; init; }
-
-    /// <summary>The caller's game connection, when the command came from a logged-in player.</summary>
-    public ClientSession? Session { get; init; }
-
-    public bool Can(Permission permission) => Caller is null || Caller.Can(permission);
-
-    /// <summary>The player a command is aimed at: the named one, or the caller when no name was given.</summary>
-    public Account? Target(string? nickname)
-        => string.IsNullOrEmpty(nickname)
-            ? (Caller is null ? null : Accounts.FindById(Caller.Id))
-            : Accounts.FindByNickname(nickname) ?? Accounts.FindByLoginId(nickname);
-}
-
-public interface IChatCommand
-{
-    string Name { get; }
-
-    string[] Aliases => [];
-
-    Permission Required { get; }
-
-    string Usage { get; }
-
-    string Description { get; }
-
-    Task ExecuteAsync(CommandContext context, string[] arguments, CancellationToken cancellationToken);
-}
 
 /// <summary>
 /// Slash commands typed in chat or on the server console. A command must run while the caller holds the
@@ -55,12 +17,32 @@ public sealed class CommandRegistry
     private readonly Dictionary<string, IChatCommand> _byName = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<IChatCommand> _commands = [];
 
-    public static CommandRegistry Instance { get; } = StandardCommands.Create();
+    public static CommandRegistry Instance { get; } = Discover();
 
     public IReadOnlyList<IChatCommand> Commands => _commands;
 
+    /// <summary>
+    /// Every command class of this assembly (the files of the Commands folder), lowest required grade first and by
+    /// name within a grade - the order /help lists them in.
+    /// </summary>
+    private static CommandRegistry Discover()
+    {
+        var registry = new CommandRegistry();
+        IEnumerable<IChatCommand> found = Assembly.GetExecutingAssembly().GetTypes()
+            .Where(type => type is { IsClass: true, IsAbstract: false } && typeof(IChatCommand).IsAssignableFrom(type)
+                && type.GetConstructor(Type.EmptyTypes) is not null)
+            .Select(type => (IChatCommand)Activator.CreateInstance(type)!)
+            .OrderBy(command => Permissions.MinimumGrade(command.Required))
+            .ThenBy(command => command.Name, StringComparer.Ordinal);
+        foreach (IChatCommand command in found) registry.Add(command);
+        return registry;
+    }
+
     public CommandRegistry Add(IChatCommand command)
     {
+        if (_byName.TryGetValue(command.Name, out IChatCommand? taken))
+            throw new InvalidOperationException($"Two commands are called '{command.Name}': {taken.GetType().Name} and {command.GetType().Name}");
+
         _commands.Add(command);
         _byName[command.Name] = command;
         foreach (string alias in command.Aliases) _byName[alias] = command;
@@ -104,5 +86,3 @@ public sealed class CommandRegistry
         return end < 0 ? text[1..] : text[1..end];
     }
 }
-
-public sealed class CommandUsageException : Exception;
